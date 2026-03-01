@@ -58,7 +58,7 @@ function loadScript(src: string, type?: string): Promise<void> {
 }
 
 // ====== Build Three.js scene from scene data and export to GLB Blob ======
-async function buildSceneToGLB(sceneData: SceneData, contentNodes: SceneNode[]): Promise<string> {
+async function buildSceneToGLB(sceneData: SceneData, contentNodes: SceneNode[]): Promise<ArrayBuffer> {
     const scene = new THREE.Scene();
 
     // Add default lighting to the exported GLB
@@ -316,42 +316,57 @@ export default function Viewer() {
                     });
                 });
 
-                // ====== MODE 2: MARKERLESS → Build GLB → Upload → model-viewer with AR ======
+                // ====== MODE 2: MARKERLESS → model-viewer with AR ======
             } else {
                 setArMode('model-viewer');
                 setStatus('loading-scripts');
                 setStatusText('Cargando visor AR...');
                 await loadScript('https://cdn.jsdelivr.net/npm/@google/model-viewer@4.1.0/dist/model-viewer.min.js', 'module');
 
-                // Build the entire scene into a GLB
-                setStatus('building-glb');
-                setStatusText('Construyendo escena 3D...');
+                // SMART GLB URL STRATEGY:
+                // 1. If scene has GLB models already uploaded to Supabase → use existing HTTP URL
+                //    (AR works on ALL platforms: Scene Viewer, Quick Look, WebXR)
+                // 2. If only primitives → build GLB blob + webxr-only mode
+                //    (AR works on Chrome Android only, since blob: URLs can't be downloaded by external apps)
+
+                const glbAssets = contentNodes
+                    .filter(n => n.type === 'gltf-model' && n.assetId && sceneData.assets[n.assetId])
+                    .map(n => sceneData.assets[n.assetId!]);
+
                 let glbUrl: string;
-                let arModes = 'webxr scene-viewer quick-look';
-                try {
-                    const glbData = await buildSceneToGLB(sceneData, contentNodes);
-                    // Try to upload to Supabase → real HTTP URL → all AR modes work
-                    setStatusText('Preparando experiencia AR...');
+                let arModes: string;
+
+                if (glbAssets.length > 0 && glbAssets[0].url.startsWith('http')) {
+                    // Already have an HTTP URL from Supabase → AR just works!
+                    glbUrl = glbAssets[0].url;
+                    arModes = 'webxr scene-viewer quick-look';
+                    console.log('✅ Using existing GLB URL (AR on all platforms):', glbUrl);
+                } else {
+                    // No uploaded GLB → build from primitives
+                    setStatus('building-glb');
+                    setStatusText('Construyendo escena 3D...');
                     try {
-                        glbUrl = await uploadGLBToSupabase(glbData, id!);
-                        console.log('✅ GLB uploaded to Supabase:', glbUrl);
-                    } catch (uploadErr) {
-                        // Upload failed (RLS, network, etc) → fall back to blob URL
-                        // blob: URLs work with webxr mode (in-browser AR on Chrome Android)
-                        // but NOT with scene-viewer or quick-look (external apps)
-                        console.warn('⚠️ Upload failed, using blob URL (webxr only):', uploadErr);
-                        const blob = new Blob([glbData], { type: 'model/gltf-binary' });
-                        glbUrl = URL.createObjectURL(blob);
-                        arModes = 'webxr'; // Only webxr works with blob URLs
+                        const glbData = await buildSceneToGLB(sceneData, contentNodes);
+                        // Try upload, fall back to blob
+                        try {
+                            glbUrl = await uploadGLBToSupabase(glbData, id!);
+                            arModes = 'webxr scene-viewer quick-look';
+                            console.log('✅ GLB uploaded:', glbUrl);
+                        } catch {
+                            const blob = new Blob([glbData], { type: 'model/gltf-binary' });
+                            glbUrl = URL.createObjectURL(blob);
+                            arModes = 'webxr';
+                            console.warn('⚠️ Upload failed, using blob (webxr only)');
+                        }
+                    } catch (e) {
+                        console.error('GLB build failed:', e);
+                        setStatus('error');
+                        setErrorMsg('Error al construir la escena AR.');
+                        return;
                     }
-                } catch (e) {
-                    console.error('GLB build failed:', e);
-                    setStatus('error');
-                    setErrorMsg('Error al construir la escena AR.');
-                    return;
                 }
 
-                // Create <model-viewer> with GLB URL
+                // Create <model-viewer>
                 const mv = document.createElement('model-viewer') as any;
                 mv.setAttribute('src', glbUrl);
                 mv.setAttribute('ar', '');

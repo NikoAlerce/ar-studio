@@ -15,3 +15,19 @@ create table if not exists
 -- Si la tabla ya existía sin las columnas name y thumbnail:
 -- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS name TEXT DEFAULT 'Proyecto sin nombre';
 -- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS thumbnail TEXT;
+
+-- ====== SUPABASE STORAGE POLICIES ======
+-- Run these in the Supabase SQL Editor to enable AR functionality.
+-- The 'assets' bucket must exist and be PUBLIC.
+
+-- Allow anyone to download/view files (needed for AR viewers to load GLBs)
+CREATE POLICY "Public read access" ON storage.objects
+  FOR SELECT USING (bucket_id = 'assets');
+
+-- Allow anyone to upload files (needed for GLB export from Viewer)
+CREATE POLICY "Public insert access" ON storage.objects
+  FOR INSERT WITH CHECK (bucket_id = 'assets');
+
+-- Allow anyone to update/overwrite files (needed for re-exporting scenes)
+CREATE POLICY "Public update access" ON storage.objects
+  FOR UPDATE USING (bucket_id = 'assets');
