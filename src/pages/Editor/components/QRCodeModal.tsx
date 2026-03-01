@@ -10,8 +10,8 @@ interface QRCodeModalProps {
 export default function QRCodeModal({ isOpen, onClose, projectId }: QRCodeModalProps) {
     if (!isOpen) return null;
 
-    // Use current window location origin for the base URL
-    const baseUrl = window.location.origin;
+    // Use VITE_PUBLIC_URL if available (for local dev pointing to prod), else use current origin
+    const baseUrl = import.meta.env.VITE_PUBLIC_URL || window.location.origin;
     const playUrl = `${baseUrl}/play/${projectId}`;
 
     const handleDownload = () => {
