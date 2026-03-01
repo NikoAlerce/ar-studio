@@ -366,9 +366,25 @@ export default function Viewer() {
                     scene.appendChild(assetsEl);
                 }
 
+                // ---- Auto-frame camera to look at scene content ----
+                // Compute center of all content nodes
+                let cx = 0, cy = 0, cz = 0;
+                contentNodes.forEach(n => { cx += n.position.x; cy += n.position.y; cz += n.position.z; });
+                const count = contentNodes.length || 1;
+                cx /= count; cy /= count; cz /= count;
+                // Place camera behind and above, looking at center
+                const dist = Math.max(3, count * 0.5);
+                const camX = cx;
+                const camY = cy + dist * 0.6;
+                const camZ = cz + dist;
+
                 const cam = document.createElement('a-camera');
-                cam.setAttribute('position', '0 1.6 0');
-                cam.setAttribute('look-controls', 'enabled: true');
+                cam.setAttribute('position', `${camX.toFixed(2)} ${camY.toFixed(2)} ${camZ.toFixed(2)}`);
+                cam.setAttribute('look-controls', 'enabled: true; magicWindowTrackingEnabled: true');
+                // Look towards center
+                const dx = cx - camX, dy = cy - camY, dz = cz - camZ;
+                const pitch = Math.atan2(-dy, Math.sqrt(dx * dx + dz * dz)) * (180 / Math.PI);
+                cam.setAttribute('rotation', `${pitch.toFixed(1)} 0 0`);
                 scene.appendChild(cam);
 
                 const dl = document.createElement('a-light');
