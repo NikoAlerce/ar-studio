@@ -326,26 +326,36 @@ export default function Viewer() {
                 // Build the entire scene into a GLB
                 setStatus('building-glb');
                 setStatusText('Construyendo escena 3D...');
-                let glbHttpUrl: string;
+                let glbUrl: string;
+                let arModes = 'webxr scene-viewer quick-look';
                 try {
                     const glbData = await buildSceneToGLB(sceneData, contentNodes);
-                    // Upload GLB to Supabase Storage to get real HTTP URL
-                    // Scene Viewer (Android) and Quick Look (iOS) are EXTERNAL APPS
-                    // that need to DOWNLOAD the GLB via HTTP — blob: URLs don't work
+                    // Try to upload to Supabase → real HTTP URL → all AR modes work
                     setStatusText('Preparando experiencia AR...');
-                    glbHttpUrl = await uploadGLBToSupabase(glbData, id!);
+                    try {
+                        glbUrl = await uploadGLBToSupabase(glbData, id!);
+                        console.log('✅ GLB uploaded to Supabase:', glbUrl);
+                    } catch (uploadErr) {
+                        // Upload failed (RLS, network, etc) → fall back to blob URL
+                        // blob: URLs work with webxr mode (in-browser AR on Chrome Android)
+                        // but NOT with scene-viewer or quick-look (external apps)
+                        console.warn('⚠️ Upload failed, using blob URL (webxr only):', uploadErr);
+                        const blob = new Blob([glbData], { type: 'model/gltf-binary' });
+                        glbUrl = URL.createObjectURL(blob);
+                        arModes = 'webxr'; // Only webxr works with blob URLs
+                    }
                 } catch (e) {
-                    console.error('GLB export/upload failed:', e);
+                    console.error('GLB build failed:', e);
                     setStatus('error');
-                    setErrorMsg('Error al preparar la escena AR. Intenta de nuevo.');
+                    setErrorMsg('Error al construir la escena AR.');
                     return;
                 }
 
-                // Create <model-viewer> with REAL HTTP URL → AR button works!
+                // Create <model-viewer> with GLB URL
                 const mv = document.createElement('model-viewer') as any;
-                mv.setAttribute('src', glbHttpUrl);
+                mv.setAttribute('src', glbUrl);
                 mv.setAttribute('ar', '');
-                mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
+                mv.setAttribute('ar-modes', arModes);
                 mv.setAttribute('ar-scale', 'auto');
                 mv.setAttribute('camera-controls', '');
                 mv.setAttribute('touch-action', 'pan-y');
