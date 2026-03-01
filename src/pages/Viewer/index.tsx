@@ -158,8 +158,23 @@ async function buildSceneToGLB(sceneData: SceneData, contentNodes: SceneNode[]):
     // Export scene to GLB binary
     const exporter = new GLTFExporter();
     const glb = await exporter.parseAsync(scene, { binary: true }) as ArrayBuffer;
+    return glb;
+}
+
+// ====== Upload GLB to Supabase Storage → get HTTP URL for native AR ======
+async function uploadGLBToSupabase(glb: ArrayBuffer, projectId: string): Promise<string> {
+    const fileName = `${projectId}/ar-scene-${Date.now()}.glb`;
     const blob = new Blob([glb], { type: 'model/gltf-binary' });
-    return URL.createObjectURL(blob);
+    const file = new File([blob], 'scene.glb', { type: 'model/gltf-binary' });
+
+    const { error } = await supabase.storage
+        .from('assets')
+        .upload(fileName, file, { cacheControl: '60', upsert: true });
+
+    if (error) throw new Error(`Upload failed: ${error.message}`);
+
+    const { data } = supabase.storage.from('assets').getPublicUrl(fileName);
+    return data.publicUrl;
 }
 
 // ====== A-Frame helpers (for image tracking mode) ======
@@ -301,29 +316,34 @@ export default function Viewer() {
                     });
                 });
 
-                // ====== MODE 2: MARKERLESS → Build GLB → model-viewer ======
+                // ====== MODE 2: MARKERLESS → Build GLB → Upload → model-viewer with AR ======
             } else {
                 setArMode('model-viewer');
                 setStatus('loading-scripts');
-                setStatusText('Cargando visor 3D...');
+                setStatusText('Cargando visor AR...');
                 await loadScript('https://cdn.jsdelivr.net/npm/@google/model-viewer@4.1.0/dist/model-viewer.min.js', 'module');
 
-                // Build the entire scene into a GLB blob
+                // Build the entire scene into a GLB
                 setStatus('building-glb');
                 setStatusText('Construyendo escena 3D...');
-                let glbBlobUrl: string;
+                let glbHttpUrl: string;
                 try {
-                    glbBlobUrl = await buildSceneToGLB(sceneData, contentNodes);
+                    const glbData = await buildSceneToGLB(sceneData, contentNodes);
+                    // Upload GLB to Supabase Storage to get real HTTP URL
+                    // Scene Viewer (Android) and Quick Look (iOS) are EXTERNAL APPS
+                    // that need to DOWNLOAD the GLB via HTTP — blob: URLs don't work
+                    setStatusText('Preparando experiencia AR...');
+                    glbHttpUrl = await uploadGLBToSupabase(glbData, id!);
                 } catch (e) {
-                    console.error('GLB export failed:', e);
+                    console.error('GLB export/upload failed:', e);
                     setStatus('error');
-                    setErrorMsg('Error al construir la escena 3D.');
+                    setErrorMsg('Error al preparar la escena AR. Intenta de nuevo.');
                     return;
                 }
 
-                // Create <model-viewer> with the built GLB
+                // Create <model-viewer> with REAL HTTP URL → AR button works!
                 const mv = document.createElement('model-viewer') as any;
-                mv.setAttribute('src', glbBlobUrl);
+                mv.setAttribute('src', glbHttpUrl);
                 mv.setAttribute('ar', '');
                 mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
                 mv.setAttribute('ar-scale', 'auto');
