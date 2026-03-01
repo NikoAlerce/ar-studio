@@ -80,14 +80,14 @@ export default function Editor() {
                 </div>
                 <div className="flex items-center gap-2.5">
                     <button
-                        onClick={() => setShowQR(true)}
+                        onClick={async () => { await handleSave(); setShowQR(true); }}
                         className="flex items-center gap-2 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-sm transition-all text-gray-400 hover:text-white border border-gray-800/60"
-                        title="Compartir (QR)"
+                        title="Guardar y compartir (QR)"
                     >
                         <Share2 size={15} /> Compartir
                     </button>
                     <button
-                        onClick={() => setShowPreview(true)}
+                        onClick={async () => { await handleSave(); setShowPreview(true); }}
                         className="flex items-center gap-2 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-sm transition-all text-gray-400 hover:text-white border border-gray-800/60"
                     >
                         <Play size={15} /> Preview

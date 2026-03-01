@@ -262,11 +262,60 @@ export default function Viewer() {
                 contentNodes.forEach(n => targetContainer.appendChild(buildEntity(n)));
                 scene.appendChild(targetContainer);
             } else {
-                // Markerless mode: place objects in world space
-                // Add a sky so it doesn't look broken when camera isn't available
-                const sky = document.createElement('a-sky');
-                sky.setAttribute('color', '#b8cfe8');
-                scene.appendChild(sky);
+                // ===== MARKERLESS AR MODE =====
+                // The approach: Camera feed as background video + transparent A-Frame overlay
+                // This is the same fundamental technique used by 8th Wall.
+
+                // Make A-Frame background transparent so camera shows through
+                scene.setAttribute('renderer', 'colorManagement: true; antialias: true; alpha: true;');
+                scene.style.background = 'transparent';
+
+                // Request camera access (prefer rear camera for AR)
+                try {
+                    setStatusText('Solicitando acceso a la cámara...');
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: { ideal: 'environment' },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+
+                    // Create fullscreen video background
+                    const videoBackground = document.createElement('video');
+                    videoBackground.srcObject = stream;
+                    videoBackground.setAttribute('playsinline', '');
+                    videoBackground.setAttribute('webkit-playsinline', '');
+                    videoBackground.setAttribute('muted', '');
+                    videoBackground.muted = true;
+                    videoBackground.autoplay = true;
+                    videoBackground.style.cssText = `
+                        position: fixed; top: 0; left: 0;
+                        width: 100vw; height: 100vh;
+                        object-fit: cover; z-index: 0;
+                        pointer-events: none;
+                    `;
+                    containerRef.current.appendChild(videoBackground);
+                    await videoBackground.play();
+
+                    // Style the A-Frame canvas to overlay on top of the camera
+                    scene.style.cssText = `
+                        position: fixed; top: 0; left: 0;
+                        width: 100vw; height: 100vh;
+                        z-index: 1; background: transparent;
+                    `;
+
+                } catch (camErr) {
+                    console.warn('Camera not available, falling back to sky background:', camErr);
+                    // Fallback: show objects against a sky (no camera)
+                    const sky = document.createElement('a-sky');
+                    sky.setAttribute('color', '#b8cfe8');
+                    scene.appendChild(sky);
+                }
+
+                // Enable look-controls so user can look around with the phone gyroscope
+                camera.setAttribute('look-controls', 'enabled: true');
 
                 contentNodes.forEach(n => scene.appendChild(buildEntity(n)));
             }
