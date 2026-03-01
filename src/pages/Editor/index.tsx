@@ -18,7 +18,7 @@ export default function Editor() {
     const [showQR, setShowQR] = useState(false);
     const [saveFlash, setSaveFlash] = useState(false);
 
-    const { isSaving, projectName, activeNodeId } = useSceneStore();
+    const { isSaving, activeNodeId } = useSceneStore();
 
     // Initial Load
     useEffect(() => {
@@ -96,10 +96,10 @@ export default function Editor() {
                         onClick={handleSave}
                         disabled={isSaving}
                         className={`flex items-center gap-2 px-4 py-1.5 rounded-lg font-medium text-sm transition-all ${saveFlash
-                                ? 'bg-green-600 text-white'
-                                : isSaving
-                                    ? 'bg-purple-800/50 text-gray-400 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20'
+                            ? 'bg-green-600 text-white'
+                            : isSaving
+                                ? 'bg-purple-800/50 text-gray-400 cursor-not-allowed'
+                                : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20'
                             }`}
                     >
                         {saveFlash ? <Check size={15} /> : <Save size={15} />}
@@ -142,8 +142,8 @@ export default function Editor() {
                                             key={m}
                                             onClick={() => setMode(m)}
                                             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${mode === m
-                                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
-                                                    : 'text-gray-400 hover:text-white hover:bg-white/10'
+                                                ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
+                                                : 'text-gray-400 hover:text-white hover:bg-white/10'
                                                 }`}
                                         >
                                             {m === 'translate' ? 'Mover (W)' : m === 'rotate' ? 'Rotar (E)' : 'Escalar (R)'}
@@ -238,7 +238,7 @@ function ProjectNameInput({ projectId }: { projectId: string }) {
 
 // --- Inspector Panel ---
 function InspectorPanel() {
-    const { sceneNodes, activeNodeId, updateTransform, updateNodeAssetId, updateNodeName, removeNode, assets, updateNodeProperties } = useSceneStore();
+    const { sceneNodes, activeNodeId, updateTransform, updateNodeAssetId, removeNode, assets, updateNodeProperties } = useSceneStore();
     const activeNode = activeNodeId ? sceneNodes[activeNodeId] : null;
 
     if (!activeNode) {
@@ -290,8 +290,8 @@ function InspectorPanel() {
                         y: val.y * (Math.PI / 180),
                         z: val.z * (Math.PI / 180)
                     })}
-                    suffix="°"
                 />
+
                 <TransformRow
                     label="Escala"
                     value={activeNode.scale}
@@ -441,12 +441,11 @@ function InlineNodeName({ nodeId, currentName }: { nodeId: string; currentName: 
     );
 }
 
-function TransformRow({ label, value, step, onChange, suffix }: {
+function TransformRow({ label, value, step, onChange }: {
     label: string;
     value: { x: number; y: number; z: number };
     step: number;
     onChange: (v: { x: number; y: number; z: number }) => void;
-    suffix?: string;
 }) {
     return (
         <div className="flex text-xs items-center gap-2">
@@ -457,7 +456,6 @@ function TransformRow({ label, value, step, onChange, suffix }: {
                         key={axis}
                         value={value[axis]}
                         step={step}
-                        suffix={suffix}
                         onChange={(v) => onChange({ ...value, [axis]: v })}
                     />
                 ))}
@@ -466,11 +464,10 @@ function TransformRow({ label, value, step, onChange, suffix }: {
     );
 }
 
-function NumericInput({ value, step, onChange, suffix }: {
+function NumericInput({ value, step, onChange }: {
     value: number;
     step: number;
     onChange: (v: number) => void;
-    suffix?: string;
 }) {
     const [local, setLocal] = useState(value.toFixed(step < 1 ? 2 : 1));
     const [focused, setFocused] = useState(false);

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSceneStore } from '../../store/sceneStore';
-import type { SceneNode, Asset } from '../../store/sceneStore';
+import type { SceneNode } from '../../store/sceneStore';
 
 export default function Viewer() {
     const { id } = useParams();
