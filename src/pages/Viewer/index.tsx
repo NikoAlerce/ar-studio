@@ -410,62 +410,71 @@ export default function Viewer() {
     }, [buildScene]);
 
     // ====== RENDER ======
-    const baseStyle: React.CSSProperties = {
-        width: '100vw', height: '100vh', background: '#0a0a0c',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        color: 'white', padding: 24, textAlign: 'center', boxSizing: 'border-box',
-    };
-
-    if (status !== 'ready') {
-        return (
-            <div style={baseStyle}>
-                {status === 'empty' && (
-                    <>
-                        <div style={{ width: 80, height: 80, borderRadius: 20, background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(99,102,241,0.1))', border: '1px solid rgba(139,92,246,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24, fontSize: 36 }}>💡</div>
-                        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Proyecto Vacío</h2>
-                        <p style={{ color: '#9ca3af', fontSize: 14, maxWidth: 340, lineHeight: 1.5 }}>
-                            No se encontró contenido. Haz clic en <strong style={{ color: '#d1d5db' }}>"Guardar"</strong> en el Editor.
-                        </p>
-                    </>
-                )}
-                {status === 'error' && (
-                    <>
-                        <div style={{ width: 80, height: 80, borderRadius: 20, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24, fontSize: 36 }}>⚠️</div>
-                        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Error</h2>
-                        <p style={{ color: '#9ca3af', fontSize: 14, maxWidth: 340 }}>{errorMsg}</p>
-                        <button onClick={() => window.location.reload()} style={{ marginTop: 20, padding: '10px 24px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Reintentar</button>
-                    </>
-                )}
-                {(status === 'loading' || status === 'loading-scripts') && (
-                    <>
-                        <div style={{ marginBottom: 32 }}>
-                            <div style={{ width: 64, height: 64, borderRadius: 16, background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 40px rgba(124,58,237,0.3)' }}>
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
-                                </svg>
-                            </div>
-                        </div>
-                        <h2 style={{ fontSize: 18, fontWeight: 700, letterSpacing: 2, marginBottom: 6 }}>AR STUDIO</h2>
-                        <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 20 }}>{statusText}</p>
-                        {arMode && (
-                            <p style={{ color: '#4b5563', fontSize: 10, fontFamily: 'monospace', marginBottom: 16 }}>
-                                {arMode === 'model-viewer' ? '🎯 AR Nativo (Surface Detection)' :
-                                    arMode === 'mindar' ? '📷 Image Tracking (MindAR)' :
-                                        '📱 Camera Overlay'}
-                            </p>
-                        )}
-                        <div style={{ width: 180, height: 3, background: '#1f2937', borderRadius: 4, overflow: 'hidden' }}>
-                            <div style={{ width: '50%', height: '100%', borderRadius: 4, background: 'linear-gradient(90deg, #7c3aed, #4f46e5)', animation: 'arloader 1.2s ease-in-out infinite' }} />
-                        </div>
-                        <style>{`@keyframes arloader { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
-                    </>
-                )}
-            </div>
-        );
-    }
-
+    // CRITICAL: containerRef MUST always be in the DOM so buildScene can inject into it.
+    // The overlay (loading/error/empty) is shown ON TOP of the container.
     return (
-        <div ref={containerRef} style={{ width: '100vw', height: '100vh', position: 'fixed', top: 0, left: 0, background: '#0a0a0c', overflow: 'hidden' }} />
+        <>
+            {/* AR Scene Container — always in DOM */}
+            <div
+                ref={containerRef}
+                style={{
+                    width: '100vw', height: '100vh', position: 'fixed', top: 0, left: 0,
+                    background: '#0a0a0c', overflow: 'hidden', zIndex: 0,
+                }}
+            />
+
+            {/* Overlay states — on top of container */}
+            {status !== 'ready' && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 10,
+                    background: '#0a0a0c',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                    color: 'white', padding: 24, textAlign: 'center', boxSizing: 'border-box',
+                }}>
+                    {status === 'empty' && (
+                        <>
+                            <div style={{ width: 80, height: 80, borderRadius: 20, background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(99,102,241,0.1))', border: '1px solid rgba(139,92,246,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24, fontSize: 36 }}>💡</div>
+                            <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Proyecto Vacío</h2>
+                            <p style={{ color: '#9ca3af', fontSize: 14, maxWidth: 340, lineHeight: 1.5 }}>
+                                No se encontró contenido. Haz clic en <strong style={{ color: '#d1d5db' }}>"Guardar"</strong> en el Editor.
+                            </p>
+                        </>
+                    )}
+                    {status === 'error' && (
+                        <>
+                            <div style={{ width: 80, height: 80, borderRadius: 20, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 24, fontSize: 36 }}>⚠️</div>
+                            <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Error</h2>
+                            <p style={{ color: '#9ca3af', fontSize: 14, maxWidth: 340 }}>{errorMsg}</p>
+                            <button onClick={() => window.location.reload()} style={{ marginTop: 20, padding: '10px 24px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Reintentar</button>
+                        </>
+                    )}
+                    {(status === 'loading' || status === 'loading-scripts') && (
+                        <>
+                            <div style={{ marginBottom: 32 }}>
+                                <div style={{ width: 64, height: 64, borderRadius: 16, background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 40px rgba(124,58,237,0.3)' }}>
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                                    </svg>
+                                </div>
+                            </div>
+                            <h2 style={{ fontSize: 18, fontWeight: 700, letterSpacing: 2, marginBottom: 6 }}>AR STUDIO</h2>
+                            <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 20 }}>{statusText}</p>
+                            {arMode && (
+                                <p style={{ color: '#4b5563', fontSize: 10, fontFamily: 'monospace', marginBottom: 16 }}>
+                                    {arMode === 'model-viewer' ? '🎯 AR Nativo (Surface Detection)' :
+                                        arMode === 'mindar' ? '📷 Image Tracking (MindAR)' :
+                                            '📱 Camera Overlay'}
+                                </p>
+                            )}
+                            <div style={{ width: 180, height: 3, background: '#1f2937', borderRadius: 4, overflow: 'hidden' }}>
+                                <div style={{ width: '50%', height: '100%', borderRadius: 4, background: 'linear-gradient(90deg, #7c3aed, #4f46e5)', animation: 'arloader 1.2s ease-in-out infinite' }} />
+                            </div>
+                            <style>{`@keyframes arloader { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }`}</style>
+                        </>
+                    )}
+                </div>
+            )}
+        </>
     );
 }
