@@ -1,39 +1,41 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSceneStore } from '../../store/sceneStore';
+import type { SceneNode, Asset } from '../../store/sceneStore';
 
 export default function Viewer() {
     const { id } = useParams();
-    const { sceneNodes, assets } = useSceneStore();
+    const { sceneNodes, assets, customCode } = useSceneStore();
     const [ready, setReady] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const [loadStatus, setLoadStatus] = useState('Conectando...');
 
-    // Helper to format position/rotation/scale for A-Frame
-    const toAFrameVec3 = (transform: { x: number, y: number, z: number }) => {
-        return `${transform.x.toFixed(3)} ${transform.y.toFixed(3)} ${transform.z.toFixed(3)}`;
+    // Helpers
+    const toVec3 = (t: { x: number; y: number; z: number }) =>
+        `${t.x.toFixed(3)} ${t.y.toFixed(3)} ${t.z.toFixed(3)}`;
+
+    const toRot = (t: { x: number; y: number; z: number }) => {
+        const d = (r: number) => r * (180 / Math.PI);
+        return `${d(t.x).toFixed(2)} ${d(t.y).toFixed(2)} ${d(t.z).toFixed(2)}`;
     };
 
-    const toAFrameRot = (transform: { x: number, y: number, z: number }) => {
-        const toDeg = (rad: number) => rad * (180 / Math.PI);
-        return `${toDeg(transform.x).toFixed(2)} ${toDeg(transform.y).toFixed(2)} ${toDeg(transform.z).toFixed(2)}`;
-    }
-
-    // Load Scene data from Supabase
+    // Load scene from Supabase
     useEffect(() => {
         if (id) {
+            setLoadStatus('Cargando escena...');
             useSceneStore.getState().loadScene(id);
         }
     }, [id]);
 
+    // Load AR scripts
     useEffect(() => {
-        // Prevent body scrolling on AR view
         document.body.style.overflow = 'hidden';
 
         if (!sceneNodes || Object.keys(sceneNodes).length === 0) return;
 
         const hasTargets = Object.values(sceneNodes).some(n => n.type === 'image-target');
 
-        // Check if already loaded to avoid duplicate script injection
+        // Check if scripts already loaded
         if (document.querySelector('script[src*="aframe.min.js"]')) {
             if (hasTargets && document.querySelector('script[src*="mindar"]')) {
                 setReady(true);
@@ -46,146 +48,191 @@ export default function Viewer() {
 
         const loadScripts = async () => {
             return new Promise<void>((resolve) => {
-                const loadEngine = () => {
+                setLoadStatus('Cargando motor 3D...');
+
+                // Load A-Frame first
+                const aframeScript = document.createElement('script');
+                aframeScript.src = "https://aframe.io/releases/1.4.2/aframe.min.js";
+                aframeScript.crossOrigin = "anonymous";
+                aframeScript.onload = () => {
                     if (hasTargets) {
+                        setLoadStatus('Cargando rastreador de imágenes...');
                         const engineScript = document.createElement('script');
                         engineScript.src = "https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image-aframe.prod.js";
                         engineScript.crossOrigin = "anonymous";
                         engineScript.onload = () => {
                             console.log('MindAR Tracking Loaded!');
+                            setLoadStatus('¡Listo! Iniciando cámara...');
                             setReady(true);
                             resolve();
                         };
                         document.head.appendChild(engineScript);
-                    };
-                    document.head.appendChild(engineScript);
-                } else {
-                    console.log('Standard WebXR Markerless Loaded!');
-                setReady(true);
-                resolve();
-            }
+                    } else {
+                        console.log('Standard WebXR Markerless Loaded!');
+                        setLoadStatus('¡Listo! Iniciando cámara...');
+                        setReady(true);
+                        resolve();
+                    }
                 };
+                document.head.appendChild(aframeScript);
+            });
+        };
 
-        // Load A-Frame 1.4.2 for both modes
-        const aframeScript = document.createElement('script');
-        aframeScript.src = "https://aframe.io/releases/1.4.2/aframe.min.js";
-        aframeScript.crossOrigin = "anonymous";
-        aframeScript.onload = loadEngine;
-        document.head.appendChild(aframeScript);
-    });
-};
+        loadScripts();
 
-loadScripts();
-
-return () => { document.body.style.overflow = 'auto'; };
+        return () => { document.body.style.overflow = 'auto'; };
     }, [sceneNodes]);
 
-if (!ready) {
-    // If it takes too long and scene is empty, maybe it's completely empty or missing
-    const isEmpty = !sceneNodes || Object.keys(sceneNodes).length === 0;
-    return (
-        <div className="w-screen h-screen bg-[#111114] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
-            {isEmpty ? (
-                <>
-                    <div className="w-16 h-16 bg-purple-900/30 rounded-full flex items-center justify-center mb-4 text-purple-400">
-                        💡
-                    </div>
-                    <h2 className="text-xl font-bold mb-2">Proyecto Vacío o No Guardado</h2>
-                    <p className="text-gray-400 text-sm max-w-sm">No se encontró contenido para este proyecto. Asegúrate de hacer clic en el botón <strong>"Guardar"</strong> en el Editor antes de escanear el código QR.</p>
-                </>
-            ) : (
-                <>
-                    <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-                    <h2 className="text-xl font-bold tracking-wider mb-2">AR STUDIO</h2>
-                    <p className="text-gray-400 text-sm">Inicializando Motor de Realidad Aumentada...</p>
-                </>
-            )}
-        </div>
-    );
-}
-
-// Prepare A-Frame injection HTML
-const nodes = Object.values(sceneNodes);
-const targetNodes = nodes.filter(n => n.type === 'image-target');
-const otherNodes = nodes.filter(n => n.type !== 'image-target');
-const videoAssets = Object.values(assets).filter(a => a.type === 'video');
-
-const renderNode = (node: any) => {
-    let attrs = `id="${node.id}" `;
-
-    switch (node.type) {
-        case 'box':
-            attrs += `geometry="primitive: box" material="color: #7a8bcc" `;
-            break;
-        case 'plane':
-            attrs += `geometry="primitive: plane; width: 1; height: 1" `;
-            if (node.assetId && assets[node.assetId]) {
-                const asset = assets[node.assetId];
-                if (asset.type === 'image') {
-                    attrs += `material="src: url(${asset.url}); side: double; shader: flat" `;
-                } else if (asset.type === 'video') {
-                    attrs += `material="src: #vid-${asset.id}; side: double; shader: flat" `;
-                }
-            } else {
-                attrs += `material="color: #7a8bcc; side: double" `;
-            }
-            break;
-        case 'light':
-            attrs += `light="type: point; intensity: 1; color: white" `;
-            break;
-        case 'gltf-model':
-            if (node.assetId && assets[node.assetId]) {
-                attrs += `gltf-model="url(${assets[node.assetId].url})" `;
-            }
-            break;
+    // --- Loading / Empty Screen ---
+    if (!ready) {
+        const isEmpty = !sceneNodes || Object.keys(sceneNodes).length === 0;
+        return (
+            <div className="w-screen h-screen bg-[#0a0a0c] text-white flex flex-col items-center justify-center font-sans p-6 text-center">
+                {isEmpty ? (
+                    <>
+                        <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-500/10 to-indigo-500/10 border border-purple-500/20 flex items-center justify-center mb-5">
+                            <span className="text-3xl">💡</span>
+                        </div>
+                        <h2 className="text-xl font-bold mb-2">Proyecto Vacío</h2>
+                        <p className="text-gray-400 text-sm max-w-sm">
+                            No se encontró contenido para este proyecto. Asegúrate de hacer clic en <strong>"Guardar"</strong> en el Editor antes de escanear el QR.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        {/* Premium Loading */}
+                        <div className="relative mb-8">
+                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30 animate-pulse">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                                </svg>
+                            </div>
+                            <div className="absolute inset-0 w-16 h-16 rounded-2xl border-2 border-purple-400/30 animate-ping"></div>
+                        </div>
+                        <h2 className="text-lg font-bold tracking-wider mb-1">AR STUDIO</h2>
+                        <p className="text-gray-500 text-sm mb-4">{loadStatus}</p>
+                        <div className="w-48 h-1 bg-gray-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full animate-[loading_1.5s_ease-in-out_infinite]" style={{ width: '60%' }}></div>
+                        </div>
+                        <style>{`@keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }`}</style>
+                    </>
+                )}
+            </div>
+        );
     }
 
-    return `
-    <a-entity
-        ${attrs}
-        position="${toAFrameVec3(node.position)}"
-        rotation="${toAFrameRot(node.rotation)}"
-        scale="${toAFrameVec3(node.scale)}"
-    ></a-entity>`;
-};
+    // --- Build A-Frame Scene ---
+    const nodes = Object.values(sceneNodes);
+    const targetNodes = nodes.filter(n => n.type === 'image-target');
+    const otherNodes = nodes.filter(n => n.type !== 'image-target');
+    const videoAssets = Object.values(assets).filter(a => a.type === 'video');
 
-const hasTargets = targetNodes.length > 0;
+    const renderNode = (node: SceneNode) => {
+        const props = node.properties || {};
+        let attrs = `id="${node.id}" `;
 
-let innerHtml = `
-<a-scene 
-    ${hasTargets
-        ? `mindar-image="imageTargetSrc: ${targetNodes[0].assetId && assets[targetNodes[0].assetId] ? assets[targetNodes[0].assetId].url : ''}; autoStart: true;" color-space="sRGB"`
-        : `webxr="optionalFeatures: hit-test, local-floor;"`}
-    renderer="colorManagement: true;"
->
-    <!-- Assets (Videos require muted to autoplay on mobile) -->
-    <a-assets>
-        ${videoAssets.map(v => `<video id="vid-${v.id}" src="${v.url}" autoplay loop muted crossorigin="anonymous" playsinline webkit-playsinline></video>`).join('\n        ')}
-    </a-assets>
+        switch (node.type) {
+            case 'box': {
+                const color = props.color || '#7a8bcc';
+                attrs += `geometry="primitive: box" material="color: ${color}; roughness: 0.5" `;
+                break;
+            }
+            case 'plane': {
+                if (node.assetId && assets[node.assetId]) {
+                    const asset = assets[node.assetId];
+                    if (asset.type === 'image') {
+                        attrs += `geometry="primitive: plane; width: 1; height: 1" material="src: url(${asset.url}); side: double; shader: flat" `;
+                    } else if (asset.type === 'video') {
+                        attrs += `geometry="primitive: plane; width: 1; height: 1" material="src: #vid-${asset.id}; side: double; shader: flat" `;
+                    }
+                } else {
+                    const color = props.color || '#7a8bcc';
+                    attrs += `geometry="primitive: plane; width: 1; height: 1" material="color: ${color}; side: double" `;
+                }
+                break;
+            }
+            case 'light': {
+                const lightType = props.lightType || 'point';
+                const color = props.color || 'white';
+                const intensity = props.intensity ?? 1;
+                const distance = props.distance ?? 10;
+                const angle = props.angle ?? (Math.PI / 4);
+                const angleDeg = (angle * 180 / Math.PI).toFixed(1);
 
-    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-    <a-light type="directional" intensity="0.8" position="1 4 2"></a-light>
-    <a-light type="ambient" intensity="0.6"></a-light>
-    <a-sky color="#b8cfe8"></a-sky>
-`;
+                let lightAttrs = `type: ${lightType}; color: ${color}; intensity: ${intensity}`;
+                if (lightType === 'point' || lightType === 'spot') {
+                    lightAttrs += `; distance: ${distance}`;
+                }
+                if (lightType === 'spot') {
+                    lightAttrs += `; angle: ${angleDeg}`;
+                }
+                attrs += `light="${lightAttrs}" `;
+                break;
+            }
+            case 'gltf-model': {
+                if (node.assetId && assets[node.assetId]) {
+                    attrs += `gltf-model="url(${assets[node.assetId].url})" `;
+                }
+                break;
+            }
+        }
 
-// Wrap elements in Image Tracker if present
-if (hasTargets) {
-    innerHtml += `
-    <a-entity mindar-image-target="targetIndex: 0">
-        ${otherNodes.map(renderNode).join('')}
-    </a-entity>
-        `;
-} else {
-    innerHtml += otherNodes.map(renderNode).join('');
-}
+        return `
+        <a-entity
+            ${attrs}
+            position="${toVec3(node.position)}"
+            rotation="${toRot(node.rotation)}"
+            scale="${toVec3(node.scale)}"
+        ></a-entity>`;
+    };
 
-innerHtml += `\n</a-scene>`;
+    const hasTargets = targetNodes.length > 0;
 
-return (
-    <div className="w-screen h-screen bg-black relative" ref={containerRef}>
-        {/* A-Frame Scene Injection */}
-        <div id="ar-scene-container" className="w-full h-full relative" dangerouslySetInnerHTML={{ __html: innerHtml }} />
-    </div>
-);
+    // Build the full A-Frame HTML
+    let html = `
+    <a-scene
+        ${hasTargets
+            ? `mindar-image="imageTargetSrc: ${targetNodes[0].assetId && assets[targetNodes[0].assetId] ? assets[targetNodes[0].assetId].url : ''}; autoStart: true;" color-space="sRGB"`
+            : `webxr="optionalFeatures: hit-test, local-floor;"`}
+        renderer="colorManagement: true;"
+        vr-mode-ui="enabled: false"
+    >
+        <!-- Assets -->
+        <a-assets>
+            ${videoAssets.map(v => `<video id="vid-${v.id}" src="${v.url}" autoplay loop muted crossorigin="anonymous" playsinline webkit-playsinline></video>`).join('\n            ')}
+        </a-assets>
+
+        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+        <a-light type="directional" intensity="0.8" position="1 4 2"></a-light>
+        <a-light type="ambient" intensity="0.6"></a-light>
+    `;
+
+    // Wrap in image target container or render flat
+    if (hasTargets) {
+        html += `
+        <a-entity mindar-image-target="targetIndex: 0">
+            ${otherNodes.map(renderNode).join('')}
+        </a-entity>`;
+    } else {
+        html += `
+        <a-sky color="#b8cfe8"></a-sky>
+        ${otherNodes.map(renderNode).join('')}`;
+    }
+
+    html += `\n    </a-scene>`;
+
+    // Inject custom code
+    if (customCode && customCode.trim()) {
+        html += `\n<script>${customCode}</script>`;
+    }
+
+    return (
+        <div className="w-screen h-screen bg-black relative" ref={containerRef}>
+            <div
+                id="ar-scene-container"
+                className="w-full h-full relative"
+                dangerouslySetInnerHTML={{ __html: html }}
+            />
+        </div>
+    );
 }

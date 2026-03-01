@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, TransformControls, Grid, useGLTF, Outlines, Environment } from '@react-three/drei';
 import * as THREE from 'three';
@@ -10,27 +10,24 @@ import type { SceneNode } from '../../../store/sceneStore';
 
 function GLBModel({ url, active }: { url: string; active: boolean }) {
     const { scene } = useGLTF(url);
+    const cloned = useMemo(() => scene.clone(true), [scene]);
     const ref = useRef<THREE.Group>(null);
 
-    // Apply a yellow emissive-style highlight on selection
     useEffect(() => {
         if (!ref.current) return;
         ref.current.traverse((child: any) => {
             if (child.isMesh) {
-                // Store original emissive for restoring later
                 if (!child.userData._origEmissive) {
                     child.userData._origEmissive = child.material.emissive?.clone?.() ?? new THREE.Color(0, 0, 0);
                 }
-                if (active) {
-                    child.material.emissive = new THREE.Color(0.4, 0.35, 0);
-                } else {
-                    child.material.emissive = child.userData._origEmissive;
-                }
+                child.material.emissive = active
+                    ? new THREE.Color(0.4, 0.35, 0)
+                    : child.userData._origEmissive;
             }
         });
     }, [active]);
 
-    return <primitive ref={ref} object={scene.clone()} />;
+    return <primitive ref={ref} object={cloned} />;
 }
 
 function BoxNode({ active, properties = {} }: { active: boolean; properties?: Record<string, any> }) {
@@ -44,13 +41,15 @@ function BoxNode({ active, properties = {} }: { active: boolean; properties?: Re
 }
 
 function PlaneNode({ active, asset, properties = {} }: { active: boolean; asset?: any; properties?: Record<string, any> }) {
-    const texRef = useRef<THREE.Texture | null>(null);
+    const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
     useEffect(() => {
         if (!asset) {
-            texRef.current = null;
+            setTexture(null);
             return;
         }
+
+        let disposed = false;
 
         if (asset.type === 'video') {
             const vid = document.createElement('video');
@@ -59,23 +58,35 @@ function PlaneNode({ active, asset, properties = {} }: { active: boolean; asset?
             vid.loop = true;
             vid.muted = true;
             vid.play();
-            texRef.current = new THREE.VideoTexture(vid);
-            texRef.current.colorSpace = THREE.SRGBColorSpace;
+            const tex = new THREE.VideoTexture(vid);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            if (!disposed) setTexture(tex);
+            return () => { disposed = true; vid.pause(); vid.src = ''; tex.dispose(); };
         } else if (asset.type === 'image') {
-            texRef.current = new THREE.TextureLoader().load(asset.url);
-            texRef.current.colorSpace = THREE.SRGBColorSpace;
+            const loader = new THREE.TextureLoader();
+            loader.load(asset.url, (tex) => {
+                tex.colorSpace = THREE.SRGBColorSpace;
+                if (!disposed) setTexture(tex);
+            });
+            return () => { disposed = true; };
         } else if (asset.type === 'image-target' && asset.thumbnailUrl) {
-            texRef.current = new THREE.TextureLoader().load(asset.thumbnailUrl);
-            texRef.current.colorSpace = THREE.SRGBColorSpace;
+            const loader = new THREE.TextureLoader();
+            loader.load(asset.thumbnailUrl, (tex) => {
+                tex.colorSpace = THREE.SRGBColorSpace;
+                if (!disposed) setTexture(tex);
+            });
+            return () => { disposed = true; };
         }
-    }, [asset]);
+
+        return () => { disposed = true; };
+    }, [asset?.id, asset?.url, asset?.thumbnailUrl]);
 
     return (
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
             <planeGeometry args={[1, 1]} />
             <meshStandardMaterial
                 color={asset ? 'white' : (properties.color || '#7a8bcc')}
-                map={texRef.current ?? undefined}
+                map={texture}
                 side={THREE.DoubleSide}
             />
             {active && <Outlines thickness={4} color="#FFD700" />}
@@ -97,11 +108,15 @@ function LightNode({ active, properties = {} }: { active: boolean; properties?: 
             {lightType === 'directional' && <directionalLight intensity={intensity} color={color} />}
             {lightType === 'ambient' && <ambientLight intensity={intensity} color={color} />}
 
-            {/* Visual Helper for the Editor */}
+            {/* Visual helper sphere */}
             {lightType !== 'ambient' && (
                 <mesh>
                     <sphereGeometry args={[0.12, 8, 8]} />
-                    <meshStandardMaterial color={active ? '#FFD700' : '#FFE066'} emissive={active ? '#AA8800' : '#000'} />
+                    <meshStandardMaterial
+                        color={active ? '#FFD700' : '#FFE066'}
+                        emissive={active ? '#AA8800' : '#555500'}
+                        emissiveIntensity={0.5}
+                    />
                     {active && <Outlines thickness={3} color="#FFD700" />}
                 </mesh>
             )}
@@ -109,7 +124,7 @@ function LightNode({ active, properties = {} }: { active: boolean; properties?: 
     );
 }
 
-// Wrapper that attaches itself to TransformControls via ref
+// Wrapper for inactive nodes
 function NodeObject({
     node, active, assets, onSelect
 }: {
@@ -118,14 +133,10 @@ function NodeObject({
     assets: Record<string, any>;
     onSelect: () => void;
 }) {
-    const groupRef = useRef<THREE.Group>(null);
-
-    // Get asset for plane
     const linkedAsset = node.assetId ? assets[node.assetId] : null;
 
     return (
         <group
-            ref={groupRef}
             position={[node.position.x, node.position.y, node.position.z]}
             rotation={[node.rotation.x, node.rotation.y, node.rotation.z]}
             scale={[node.scale.x, node.scale.y, node.scale.z]}
@@ -145,23 +156,21 @@ function NodeObject({
                 </Suspense>
             )}
             {node.type === 'image-target' && (
-                <>
-                    {linkedAsset?.thumbnailUrl ? (
-                        <PlaneNode active={active} asset={linkedAsset} />
-                    ) : (
-                        <mesh>
-                            <planeGeometry args={[1, 1]} />
-                            <meshStandardMaterial color="#6688FF" wireframe />
-                            {active && <Outlines thickness={4} color="#FFD700" />}
-                        </mesh>
-                    )}
-                </>
+                linkedAsset?.thumbnailUrl ? (
+                    <PlaneNode active={active} asset={linkedAsset} />
+                ) : (
+                    <mesh>
+                        <planeGeometry args={[1, 1]} />
+                        <meshStandardMaterial color="#6688FF" wireframe />
+                        {active && <Outlines thickness={4} color="#FFD700" />}
+                    </mesh>
+                )
             )}
         </group>
     );
 }
 
-// Active wrapper: attaches TransformControls to the rendered group
+// Active node + TransformControls
 function ActiveNodeWithControls({
     node, assets, mode, orbitRef, updateTransformFn
 }: {
@@ -173,7 +182,6 @@ function ActiveNodeWithControls({
 }) {
     const [target, setTarget] = useState<THREE.Group | null>(null);
     const transformRef = useRef<any>(null);
-
     const linkedAsset = node.assetId ? assets[node.assetId] : null;
 
     useEffect(() => {
@@ -211,11 +219,6 @@ function ActiveNodeWithControls({
                 rotation={[node.rotation.x, node.rotation.y, node.rotation.z]}
                 scale={[node.scale.x, node.scale.y, node.scale.z]}
                 onClick={(e) => e.stopPropagation()}
-                onPointerMissed={(e) => {
-                    if (e.type === 'click') {
-                        // Usually handled by Canvas, but just in case
-                    }
-                }}
             >
                 {node.type === 'box' && <BoxNode active={true} properties={node.properties} />}
                 {node.type === 'plane' && <PlaneNode active={true} asset={linkedAsset} properties={node.properties} />}
@@ -226,20 +229,17 @@ function ActiveNodeWithControls({
                     </Suspense>
                 )}
                 {node.type === 'image-target' && (
-                    <>
-                        {linkedAsset?.thumbnailUrl ? (
-                            <PlaneNode active={true} asset={linkedAsset} properties={node.properties} />
-                        ) : (
-                            <mesh>
-                                <planeGeometry args={[1, 1]} />
-                                <meshStandardMaterial color="#6688FF" wireframe />
-                                <Outlines thickness={4} color="#FFD700" />
-                            </mesh>
-                        )}
-                    </>
+                    linkedAsset?.thumbnailUrl ? (
+                        <PlaneNode active={true} asset={linkedAsset} properties={node.properties} />
+                    ) : (
+                        <mesh>
+                            <planeGeometry args={[1, 1]} />
+                            <meshStandardMaterial color="#6688FF" wireframe />
+                            <Outlines thickness={4} color="#FFD700" />
+                        </mesh>
+                    )
                 )}
             </group>
-            {/* TransformControls anchored to the group ref */}
             {target && (
                 <TransformControls
                     ref={transformRef}
@@ -268,16 +268,13 @@ export default function Canvas3D({ mode }: { mode: TransformMode }) {
             onPointerMissed={() => setActiveNode(null)}
             gl={{ antialias: true }}
         >
-            {/* Light blue background like 8th Wall */}
             <color attach="background" args={['#b8cfe8']} />
             <ambientLight intensity={0.8} />
             <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
             <directionalLight position={[-5, 3, -5]} intensity={0.4} />
 
-            {/* Environment provides reflection data for PBR materials in GLB models */}
             <Environment preset="city" />
 
-            {/* Grid helper */}
             <Grid
                 infiniteGrid
                 fadeDistance={25}
@@ -287,7 +284,6 @@ export default function Canvas3D({ mode }: { mode: TransformMode }) {
                 cellSize={1}
             />
 
-            {/* Render all nodes */}
             {Object.values(sceneNodes).map((node) => {
                 const isActive = activeNodeId === node.id;
 

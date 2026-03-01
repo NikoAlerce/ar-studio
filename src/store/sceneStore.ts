@@ -10,66 +10,104 @@ export interface Transform {
 }
 
 export interface Asset {
-    id: string; // Unique ID for the uploaded file
-    name: string; // e.g. "poseidon.glb", "marker.jpg"
+    id: string;
+    name: string;
     type: 'gltf' | 'image-target' | 'video' | 'image' | 'audio';
-    url: string; // Public URL in Supabase Storage
-    thumbnailUrl?: string; // For image-targets or video previews
+    url: string;
+    thumbnailUrl?: string;
 }
 
 export interface SceneNode {
     id: string;
     name: string;
     type: 'gltf-model' | 'image-target' | 'plane' | 'box' | 'light';
-    assetId?: string; // Relación: Un modelo GLTF o una textura de Video apunta a un Asset subido
+    assetId?: string;
     position: Transform;
     rotation: Transform;
     scale: Transform;
-    properties?: Record<string, any>; // Material colors, light intensities, etc.
+    properties?: Record<string, any>;
+}
+
+export interface ProjectInfo {
+    id: string;
+    name: string;
+    thumbnail: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
 interface DBSceneData {
     assets: Record<string, Asset>;
     sceneNodes: Record<string, SceneNode>;
+    customCode?: string;
 }
 
 interface SceneState {
-    // Estado del Modelo de Datos
+    // Data Model state
     assets: Record<string, Asset>;
     sceneNodes: Record<string, SceneNode>;
+    customCode: string;
 
-    // Estado de la UI
+    // Project meta
+    projectName: string;
+    projects: ProjectInfo[];
+
+    // UI State
     activeNodeId: string | null;
     isSaving: boolean;
 
-    // Acciones de UI
+    // UI Actions
     setActiveNode: (id: string | null) => void;
+    setProjectName: (name: string) => void;
 
-    // Acciones de Nodos (Escena)
+    // Node Actions
     updateTransform: (id: string, property: 'position' | 'rotation' | 'scale', value: Transform) => void;
     addNode: (node: SceneNode) => void;
     removeNode: (id: string) => void;
+    updateNodeName: (id: string, name: string) => void;
     updateNodeProperties: (id: string, properties: Record<string, any>) => void;
     updateNodeAssetId: (id: string, assetId: string) => void;
 
-    // Acciones de Assets (Biblioteca)
+    // Asset Actions
     uploadAsset: (projectId: string, file: File, type: Asset['type'], thumbnailUrl?: string) => Promise<string | null>;
+    deleteAsset: (assetId: string) => void;
 
-    // Sincronización Supabase
+    // Code Action
+    setCustomCode: (code: string) => void;
+
+    // Supabase Sync
     saveScene: (projectId: string) => Promise<boolean>;
     loadScene: (projectId: string) => Promise<void>;
+    listProjects: () => Promise<void>;
+    deleteProject: (projectId: string) => Promise<boolean>;
+    updateProjectName: (projectId: string, name: string) => Promise<void>;
 }
 
-// Valores por defecto
+const DEFAULT_CODE = `// AR Studio — Interactive Logic Layer
+// This code runs inside your AR experience.
+// Use it to add animations, interactions, and custom behavior.
+
+// Example: make all entities slowly rotate
+// AFRAME.registerComponent('auto-rotate', {
+//   tick: function (time, timeDelta) {
+//     this.el.object3D.rotation.y += 0.01;
+//   }
+// });
+`;
+
 const defaultSceneNodes: Record<string, SceneNode> = {};
 
 export const useSceneStore = create<SceneState>((set, get) => ({
     assets: {},
     sceneNodes: defaultSceneNodes,
+    customCode: DEFAULT_CODE,
+    projectName: 'Proyecto sin nombre',
+    projects: [],
     activeNodeId: null,
     isSaving: false,
 
     setActiveNode: (id) => set({ activeNodeId: id }),
+    setProjectName: (name) => set({ projectName: name }),
 
     updateTransform: (id, property, value) => set((state) => {
         if (!state.sceneNodes[id]) return state;
@@ -86,7 +124,7 @@ export const useSceneStore = create<SceneState>((set, get) => ({
 
     addNode: (node) => set((state) => ({
         sceneNodes: { ...state.sceneNodes, [node.id]: node },
-        activeNodeId: node.id // Auto-seleccionar al añadir
+        activeNodeId: node.id
     })),
 
     removeNode: (id) => set((state) => {
@@ -95,6 +133,16 @@ export const useSceneStore = create<SceneState>((set, get) => ({
         return {
             sceneNodes: newNodes,
             activeNodeId: state.activeNodeId === id ? null : state.activeNodeId
+        };
+    }),
+
+    updateNodeName: (id, name) => set((state) => {
+        if (!state.sceneNodes[id]) return state;
+        return {
+            sceneNodes: {
+                ...state.sceneNodes,
+                [id]: { ...state.sceneNodes[id], name }
+            }
         };
     }),
 
@@ -116,49 +164,61 @@ export const useSceneStore = create<SceneState>((set, get) => ({
         return {
             sceneNodes: {
                 ...state.sceneNodes,
-                [id]: {
-                    ...state.sceneNodes[id],
-                    assetId
-                }
+                [id]: { ...state.sceneNodes[id], assetId }
             }
         };
     }),
 
-    // Methods
+    deleteAsset: (assetId) => set((state) => {
+        const newAssets = { ...state.assets };
+        delete newAssets[assetId];
+        // Also clear assetId from any nodes referencing it
+        const newNodes = { ...state.sceneNodes };
+        for (const nodeId in newNodes) {
+            if (newNodes[nodeId].assetId === assetId) {
+                newNodes[nodeId] = { ...newNodes[nodeId], assetId: undefined };
+            }
+        }
+        return { assets: newAssets, sceneNodes: newNodes };
+    }),
+
+    setCustomCode: (code) => set({ customCode: code }),
+
+    // ----- Supabase Methods -----
+
     saveScene: async (projectId: string) => {
         set({ isSaving: true });
         try {
-            const { assets, sceneNodes } = get();
-            console.log(`Guardando el proyecto ${projectId} en la DB...`);
+            const { assets, sceneNodes, customCode, projectName } = get();
 
-            const sceneDataToSave: DBSceneData = { assets, sceneNodes };
+            const sceneDataToSave: DBSceneData = { assets, sceneNodes, customCode };
 
             const { error } = await supabase
                 .from('projects')
                 .upsert({
                     id: projectId,
-                    scene_data: sceneDataToSave as any, // jsonb casting
+                    name: projectName,
+                    scene_data: sceneDataToSave as any,
                     updated_at: new Date().toISOString()
                 });
 
             if (error) throw error;
 
-            console.log("¡Proyecto guardado con éxito!");
+            console.log("✅ Proyecto guardado con éxito!");
             set({ isSaving: false });
             return true;
         } catch (err) {
-            console.error("Excepción inesperada al guardar:", err);
+            console.error("Error al guardar:", err);
             set({ isSaving: false });
             return false;
         }
     },
 
     loadScene: async (projectId: string) => {
-        console.log(`Cargando proyecto ${projectId}...`);
         try {
             const { data, error } = await supabase
                 .from('projects')
-                .select('scene_data')
+                .select('scene_data, name')
                 .eq('id', projectId)
                 .single();
 
@@ -170,12 +230,13 @@ export const useSceneStore = create<SceneState>((set, get) => ({
             if (data && data.scene_data) {
                 const loadedData = data.scene_data as unknown as DBSceneData | Record<string, any>;
 
-                // Compatibility mapping just in case it's the old format (entities)
+                // Compatibility: old format had 'entities' instead of 'sceneNodes'
                 if ('entities' in loadedData && !('sceneNodes' in loadedData)) {
-                    console.log("Migrando datos de formato antiguo (entities) a nuevo formato (sceneNodes)...");
                     set({
                         assets: {},
                         sceneNodes: loadedData.entities as any,
+                        customCode: DEFAULT_CODE,
+                        projectName: data.name || 'Proyecto sin nombre',
                         activeNodeId: null
                     });
                 } else {
@@ -183,26 +244,80 @@ export const useSceneStore = create<SceneState>((set, get) => ({
                     set({
                         assets: typedData.assets || {},
                         sceneNodes: typedData.sceneNodes || {},
+                        customCode: typedData.customCode || DEFAULT_CODE,
+                        projectName: data.name || 'Proyecto sin nombre',
                         activeNodeId: null
                     });
                 }
-                console.log("Datos cargados.");
             } else {
-                console.log("Proyecto nuevo. Iniciando en blanco.");
-                set({ assets: {}, sceneNodes: defaultSceneNodes, activeNodeId: null });
+                set({
+                    assets: {},
+                    sceneNodes: defaultSceneNodes,
+                    customCode: DEFAULT_CODE,
+                    projectName: 'Proyecto sin nombre',
+                    activeNodeId: null,
+                });
             }
         } catch (err) {
-            console.error("Excepción inesperada al cargar:", err);
+            console.error("Excepción al cargar:", err);
+        }
+    },
+
+    listProjects: async () => {
+        try {
+            const { data, error } = await supabase
+                .from('projects')
+                .select('id, name, thumbnail, created_at, updated_at')
+                .order('updated_at', { ascending: false });
+
+            if (error) {
+                console.error("Error listando proyectos:", error);
+                return;
+            }
+
+            set({ projects: (data || []) as ProjectInfo[] });
+        } catch (err) {
+            console.error("Excepción al listar proyectos:", err);
+        }
+    },
+
+    deleteProject: async (projectId: string) => {
+        try {
+            const { error } = await supabase
+                .from('projects')
+                .delete()
+                .eq('id', projectId);
+
+            if (error) throw error;
+
+            // Remove from local list
+            set((state) => ({
+                projects: state.projects.filter(p => p.id !== projectId)
+            }));
+            return true;
+        } catch (err) {
+            console.error("Error eliminando proyecto:", err);
+            return false;
+        }
+    },
+
+    updateProjectName: async (projectId: string, name: string) => {
+        set({ projectName: name });
+        try {
+            await supabase
+                .from('projects')
+                .update({ name, updated_at: new Date().toISOString() })
+                .eq('id', projectId);
+        } catch (err) {
+            console.error("Error actualizando nombre:", err);
         }
     },
 
     uploadAsset: async (projectId: string, file: File, type: Asset['type'], thumbnailUrl?: string) => {
         set({ isSaving: true });
         try {
-            // Generar nombre único para no sobreescribir
             const fileName = `${projectId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
 
-            console.log(`Subiendo archivo ${fileName} a Supabase Storage...`);
             const { error } = await supabase.storage
                 .from('assets')
                 .upload(fileName, file, {
@@ -212,17 +327,14 @@ export const useSceneStore = create<SceneState>((set, get) => ({
 
             if (error) throw error;
 
-            // Obtener URL pública
             const { data: publicUrlData } = supabase.storage
                 .from('assets')
                 .getPublicUrl(fileName);
 
             const url = publicUrlData.publicUrl;
-            console.log(`Archivo subido con éxito. URL: ${url}`);
 
-            // Crear el Asset en la Biblioteca (NO instanciarlo automáticamente en la escena)
             const newAsset: Asset = {
-                id: `asset-${Date.now()}`,
+                id: crypto.randomUUID(),
                 name: file.name,
                 type: type,
                 url: url,
@@ -234,12 +346,12 @@ export const useSceneStore = create<SceneState>((set, get) => ({
                 isSaving: false
             }));
 
-            // Auto-guardar para guardar la biblioteca
+            // Auto-save
             await get().saveScene(projectId);
 
             return newAsset.id;
         } catch (err) {
-            console.error("Excepción inesperada al subir archivo:", err);
+            console.error("Error al subir archivo:", err);
             set({ isSaving: false });
             return null;
         }
