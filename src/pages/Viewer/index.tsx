@@ -338,37 +338,36 @@ export default function Viewer() {
 
                 // Load AlvaAR from CDN
                 setStatusText('Cargando SLAM visual...');
+                let alvaInstance: any = null;
                 try {
-                    await loadScript('https://cdn.jsdelivr.net/gh/nicolo-ribaudo/AliucordRN@main/dist/alva_ar.js');
-                } catch {
-                    // AlvaAR CDN load failed — try alternative or fall back to gyro-only
-                    console.warn('AlvaAR CDN not available, falling back to gyro mode');
-                    // Enable gyroscope-based look around
+                    // Load AlvaAR from GitHub via jsDelivr CDN
+                    await loadScript('https://cdn.jsdelivr.net/gh/alanross/AlvaAR@main/dist/alva_ar.js');
+                    const AlvaAR = (window as any).AlvaAR;
+                    if (AlvaAR) {
+                        alvaInstance = await AlvaAR.Initialize(VW, VH);
+                    }
+                } catch (e) {
+                    console.warn('AlvaAR unavailable:', e);
+                }
+
+                if (!alvaInstance) {
+                    // AlvaAR failed — fall back to gyro mode with camera
+                    console.warn('AlvaAR SLAM not available, using gyroscope mode');
                     const cam = document.createElement('a-camera');
                     cam.setAttribute('position', '0 1.6 0');
                     cam.setAttribute('look-controls', 'enabled: true');
                     scene.appendChild(cam);
+                    const dl = document.createElement('a-light');
+                    dl.setAttribute('type', 'directional'); dl.setAttribute('intensity', '0.6'); dl.setAttribute('position', '1 4 2');
+                    scene.appendChild(dl);
+                    const al = document.createElement('a-light');
+                    al.setAttribute('type', 'ambient'); al.setAttribute('intensity', '0.5');
+                    scene.appendChild(al);
                     contentNodes.forEach(n => scene.appendChild(buildEntity(n)));
                     containerRef.current.appendChild(scene);
                     setStatus('ready');
                     return;
                 }
-
-                // Initialize AlvaAR
-                const AlvaAR = (window as any).AlvaAR;
-                if (!AlvaAR) {
-                    // If AlvaAR didn't load properly, use gyroscope fallback
-                    const cam = document.createElement('a-camera');
-                    cam.setAttribute('position', '0 1.6 0');
-                    cam.setAttribute('look-controls', 'enabled: true');
-                    scene.appendChild(cam);
-                    contentNodes.forEach(n => scene.appendChild(buildEntity(n)));
-                    containerRef.current.appendChild(scene);
-                    setStatus('ready');
-                    return;
-                }
-
-                const alva = await AlvaAR.Initialize(VW, VH);
 
                 // Camera without look-controls (SLAM controls it)
                 const cam = document.createElement('a-camera');
@@ -403,12 +402,12 @@ export default function Viewer() {
 
                     ctx.drawImage(videoBg, 0, 0, VW, VH);
                     const frame = ctx.getImageData(0, 0, VW, VH);
-                    const cameraPose = alva.findCameraPose(frame);
+                    const cameraPose = alvaInstance.findCameraPose(frame);
 
                     if (cameraPose) {
                         // Apply camera pose to A-Frame camera
-                        const aframeCam = scene.querySelector('a-camera');
-                        if (aframeCam) {
+                        const aframeCam = scene.querySelector('a-camera') as any;
+                        if (aframeCam?.object3D) {
                             // cameraPose is a 4x4 matrix [R|t]
                             const r = cameraPose.rotation;
                             const t = cameraPose.translation;
@@ -420,7 +419,7 @@ export default function Viewer() {
 
                         // Try to detect a plane
                         if (!planeDetected) {
-                            const planePose = alva.findPlane();
+                            const planePose = alvaInstance.findPlane();
                             if (planePose) {
                                 planeDetected = true;
                                 const content = document.getElementById('slam-content');
