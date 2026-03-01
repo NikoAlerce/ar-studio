@@ -10,6 +10,7 @@ const NODE_ICONS: Record<string, string> = {
     'plane': '📰',
     'light': '💡',
     'image-target': '🎯',
+    'camera': '🎥',
 };
 
 export default function Sidebar({ projectId }: { projectId: string }) {
@@ -132,6 +133,8 @@ export default function Sidebar({ projectId }: { projectId: string }) {
                 color: '#ffffff', intensity: 1, distance: 10, lightType: 'point'
             } : type === 'box' || type === 'plane' ? {
                 color: '#7a8bcc'
+            } : type === 'camera' ? {
+                // Empty properties for now, but could hold fov later
             } : {}
         });
     };
@@ -151,6 +154,7 @@ export default function Sidebar({ projectId }: { projectId: string }) {
                         <button onClick={() => handleAddPrimitive('box', 'Cubo')} title="Añadir Cubo" className="hover:scale-110 transition-transform opacity-70 hover:opacity-100">📦</button>
                         <button onClick={() => handleAddPrimitive('plane', 'Plano')} title="Añadir Plano" className="hover:scale-110 transition-transform opacity-70 hover:opacity-100">📰</button>
                         <button onClick={() => handleAddPrimitive('light', 'Luz')} title="Añadir Luz" className="hover:scale-110 transition-transform opacity-70 hover:opacity-100">💡</button>
+                        <button onClick={() => handleAddPrimitive('camera', 'Cámara')} title="Añadir Cámara" className="hover:scale-110 transition-transform opacity-70 hover:opacity-100">🎥</button>
                     </div>
                 </div>
                 <div
@@ -171,8 +175,8 @@ export default function Sidebar({ projectId }: { projectId: string }) {
                             key={node.id}
                             onClick={() => setActiveNode(node.id)}
                             className={`px-3 py-2 text-sm rounded-lg cursor-pointer truncate transition-all flex items-center gap-2 ${activeNodeId === node.id
-                                    ? 'bg-purple-500/15 text-purple-300 border border-purple-500/25'
-                                    : 'bg-transparent text-gray-400 border border-transparent hover:bg-white/5 hover:text-gray-300'
+                                ? 'bg-purple-500/15 text-purple-300 border border-purple-500/25'
+                                : 'bg-transparent text-gray-400 border border-transparent hover:bg-white/5 hover:text-gray-300'
                                 }`}
                         >
                             <span className="opacity-70 text-[10px]">{NODE_ICONS[node.type] || '📦'}</span>
@@ -189,8 +193,8 @@ export default function Sidebar({ projectId }: { projectId: string }) {
                     <button
                         onClick={() => setActiveTab('files')}
                         className={`flex-1 py-3 font-semibold uppercase tracking-wider flex justify-center items-center gap-2 transition-colors ${activeTab === 'files'
-                                ? 'text-purple-400 border-b-2 border-purple-500 bg-[#131318]'
-                                : 'text-gray-600 hover:text-gray-400'
+                            ? 'text-purple-400 border-b-2 border-purple-500 bg-[#131318]'
+                            : 'text-gray-600 hover:text-gray-400'
                             }`}
                     >
                         <FileIcon size={13} /> Files
@@ -198,8 +202,8 @@ export default function Sidebar({ projectId }: { projectId: string }) {
                     <button
                         onClick={() => setActiveTab('targets')}
                         className={`flex-1 py-3 font-semibold uppercase tracking-wider flex justify-center items-center gap-2 transition-colors ${activeTab === 'targets'
-                                ? 'text-purple-400 border-b-2 border-purple-500 bg-[#131318]'
-                                : 'text-gray-600 hover:text-gray-400'
+                            ? 'text-purple-400 border-b-2 border-purple-500 bg-[#131318]'
+                            : 'text-gray-600 hover:text-gray-400'
                             }`}
                     >
                         <Target size={13} /> Targets

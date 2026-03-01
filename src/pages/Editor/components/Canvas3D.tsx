@@ -124,6 +124,29 @@ function LightNode({ active, properties = {} }: { active: boolean; properties?: 
     );
 }
 
+function CameraNode({ active }: { active: boolean }) {
+    return (
+        <group>
+            {/* Camera Body */}
+            <mesh>
+                <boxGeometry args={[0.4, 0.4, 0.6]} />
+                <meshStandardMaterial color={active ? '#FFD700' : '#444455'} roughness={0.5} />
+                {active && <Outlines thickness={3} color="#FFD700" />}
+            </mesh>
+            {/* Camera Lens */}
+            <mesh position={[0, 0, -0.4]} rotation={[-Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.2, 0.15, 0.3, 16]} />
+                <meshStandardMaterial color={active ? '#FFAA00' : '#222'} roughness={0.2} />
+            </mesh>
+            {/* View Cone (Frustum Helper) */}
+            <mesh position={[0, 0, -1.3]} rotation={[-Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.8, 0, 1.5, 4, 1, true]} />
+                <meshBasicMaterial color={active ? '#FFD700' : '#888'} wireframe opacity={active ? 0.3 : 0.15} transparent side={THREE.DoubleSide} />
+            </mesh>
+        </group>
+    );
+}
+
 // Wrapper for inactive nodes
 function NodeObject({
     node, active, assets, onSelect
@@ -145,6 +168,7 @@ function NodeObject({
             {node.type === 'box' && <BoxNode active={active} properties={node.properties} />}
             {node.type === 'plane' && <PlaneNode active={active} asset={linkedAsset} properties={node.properties} />}
             {node.type === 'light' && <LightNode active={active} properties={node.properties} />}
+            {node.type === 'camera' && <CameraNode active={active} />}
             {node.type === 'gltf-model' && node.assetId && assets[node.assetId] && (
                 <Suspense fallback={
                     <mesh>
@@ -223,6 +247,7 @@ function ActiveNodeWithControls({
                 {node.type === 'box' && <BoxNode active={true} properties={node.properties} />}
                 {node.type === 'plane' && <PlaneNode active={true} asset={linkedAsset} properties={node.properties} />}
                 {node.type === 'light' && <LightNode active={true} properties={node.properties} />}
+                {node.type === 'camera' && <CameraNode active={true} />}
                 {node.type === 'gltf-model' && node.assetId && assets[node.assetId] && (
                     <Suspense fallback={null}>
                         <GLBModel url={assets[node.assetId].url} active={true} />

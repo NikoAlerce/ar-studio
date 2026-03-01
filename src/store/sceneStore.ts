@@ -20,7 +20,7 @@ export interface Asset {
 export interface SceneNode {
     id: string;
     name: string;
-    type: 'gltf-model' | 'image-target' | 'plane' | 'box' | 'light';
+    type: 'gltf-model' | 'image-target' | 'plane' | 'box' | 'light' | 'camera';
     assetId?: string;
     position: Transform;
     rotation: Transform;
