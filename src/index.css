@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-500: #646cff; /* Color principal de acento */
+  --color-bg-panel: #1e1e24; /* El gris oscuro del panel 8thWall */
+  --color-bg-base: #111114; /* El fondo primario del editor */
+  --color-text-base: #e0e0e0;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--color-bg-base);
+  color: var(--color-text-base);
+}
+
+#root {
+  width: 100%;
+}
