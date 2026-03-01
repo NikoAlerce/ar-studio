@@ -1,18 +1,20 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * AR VIEWER — Production AR Experience
  * 
- * TWO MODES:
- * 1. IMAGE TRACKING: MindAR + A-Frame (camera → detect image → overlay 3D)
- * 2. MARKERLESS AR:  <model-viewer> by Google (native ARCore/ARKit surface detection)
- *    - Android: ARCore Scene Viewer → real surface detection, pinch-to-zoom
- *    - iOS: AR Quick Look → native Apple AR, anchoring, pinch-to-zoom
- *    - Desktop: Interactive 3D viewer with orbit controls
+ * KEY INNOVATION: ALL scenes are converted to GLB on-the-fly using Three.js GLTFExporter.
+ * This means model-viewer can render ANY scene (boxes, lights, GLBs, planes)
+ * with native ARCore/ARKit surface detection, pinch-to-zoom, and anchoring.
  * 
- * This is the same technology used by objkt.com, Sketchfab, and Google Search AR.
+ * MODES:
+ * 1. IMAGE TRACKING: MindAR + A-Frame (camera → detect image → overlay 3D)
+ * 2. MARKERLESS AR:  Scene → Three.js → GLB → model-viewer (native AR everywhere)
  */
 
 interface Transform { x: number; y: number; z: number; }
@@ -55,7 +57,112 @@ function loadScript(src: string, type?: string): Promise<void> {
     });
 }
 
-// ====== Conversion helpers ======
+// ====== Build Three.js scene from scene data and export to GLB Blob ======
+async function buildSceneToGLB(sceneData: SceneData, contentNodes: SceneNode[]): Promise<string> {
+    const scene = new THREE.Scene();
+
+    // Add default lighting to the exported GLB
+    // model-viewer handles environment lighting, but we embed scene lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    for (const node of contentNodes) {
+        const props = node.properties || {};
+
+        switch (node.type) {
+            case 'box': {
+                const geo = new THREE.BoxGeometry(1, 1, 1);
+                const mat = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(props.color || '#7a8bcc'),
+                    roughness: 0.5,
+                    metalness: 0.1,
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(node.position.x, node.position.y, node.position.z);
+                mesh.rotation.set(node.rotation.x, node.rotation.y, node.rotation.z);
+                mesh.scale.set(node.scale.x, node.scale.y, node.scale.z);
+                mesh.name = node.name;
+                scene.add(mesh);
+                break;
+            }
+            case 'plane': {
+                const geo = new THREE.PlaneGeometry(1, 1);
+                let mat: THREE.Material;
+                if (node.assetId && sceneData.assets[node.assetId]) {
+                    const asset = sceneData.assets[node.assetId];
+                    if (asset.type === 'image') {
+                        try {
+                            const tex = await new THREE.TextureLoader().loadAsync(asset.url);
+                            tex.colorSpace = THREE.SRGBColorSpace;
+                            mat = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide });
+                        } catch {
+                            mat = new THREE.MeshStandardMaterial({ color: props.color || '#7a8bcc', side: THREE.DoubleSide });
+                        }
+                    } else {
+                        mat = new THREE.MeshStandardMaterial({ color: props.color || '#7a8bcc', side: THREE.DoubleSide });
+                    }
+                } else {
+                    mat = new THREE.MeshStandardMaterial({ color: props.color || '#7a8bcc', side: THREE.DoubleSide });
+                }
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(node.position.x, node.position.y, node.position.z);
+                mesh.rotation.set(node.rotation.x, node.rotation.y, node.rotation.z);
+                mesh.scale.set(node.scale.x, node.scale.y, node.scale.z);
+                mesh.name = node.name;
+                scene.add(mesh);
+                break;
+            }
+            case 'light': {
+                const lt = props.lightType || 'point';
+                const color = new THREE.Color(props.color || '#ffffff');
+                const intensity = props.intensity ?? 1;
+                let light: THREE.Light;
+
+                if (lt === 'directional') {
+                    light = new THREE.DirectionalLight(color, intensity);
+                } else if (lt === 'spot') {
+                    const spot = new THREE.SpotLight(color, intensity);
+                    spot.angle = props.angle ?? Math.PI / 4;
+                    spot.penumbra = 0.5;
+                    light = spot;
+                } else {
+                    const point = new THREE.PointLight(color, intensity);
+                    point.distance = props.distance ?? 10;
+                    light = point;
+                }
+                light.position.set(node.position.x, node.position.y, node.position.z);
+                light.name = node.name;
+                scene.add(light);
+                break;
+            }
+            case 'gltf-model': {
+                if (node.assetId && sceneData.assets[node.assetId]) {
+                    try {
+                        const loader = new GLTFLoader();
+                        const gltf = await loader.loadAsync(sceneData.assets[node.assetId].url);
+                        const model = gltf.scene;
+                        model.position.set(node.position.x, node.position.y, node.position.z);
+                        model.rotation.set(node.rotation.x, node.rotation.y, node.rotation.z);
+                        model.scale.set(node.scale.x, node.scale.y, node.scale.z);
+                        model.name = node.name;
+                        scene.add(model);
+                    } catch (e) {
+                        console.warn('Failed to load GLB for export:', e);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // Export scene to GLB binary
+    const exporter = new GLTFExporter();
+    const glb = await exporter.parseAsync(scene, { binary: true }) as ArrayBuffer;
+    const blob = new Blob([glb], { type: 'model/gltf-binary' });
+    return URL.createObjectURL(blob);
+}
+
+// ====== A-Frame helpers (for image tracking mode) ======
 const vec3 = (t: Transform) => `${t.x.toFixed(4)} ${t.y.toFixed(4)} ${t.z.toFixed(4)}`;
 const toDeg = (t: Transform) => {
     const d = (r: number) => (r * 180) / Math.PI;
@@ -67,8 +174,8 @@ export default function Viewer() {
     const { id } = useParams();
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneInjected = useRef(false);
-    const [status, setStatus] = useState<'loading' | 'empty' | 'loading-scripts' | 'ready' | 'error'>('loading');
-    const [statusText, setStatusText] = useState('Conectando con el servidor...');
+    const [status, setStatus] = useState<'loading' | 'empty' | 'building-glb' | 'loading-scripts' | 'ready' | 'error'>('loading');
+    const [statusText, setStatusText] = useState('Conectando...');
     const [errorMsg, setErrorMsg] = useState('');
     const [arMode, setArMode] = useState('');
 
@@ -99,89 +206,22 @@ export default function Viewer() {
             const targetNodes = nodes.filter(n => n.type === 'image-target');
             const contentNodes = nodes.filter(n => n.type !== 'image-target');
             const videoAssets = Object.values(sceneData.assets).filter(a => a.type === 'video');
+            const projectName = (data as any).name || 'AR Experience';
 
-            // Find GLB models for model-viewer
-            const glbNodes = contentNodes.filter(n => n.type === 'gltf-model' && n.assetId && sceneData.assets[n.assetId]);
-            const hasGLB = glbNodes.length > 0;
-
-            // ====== 3. LOAD SCRIPTS ======
-            setStatus('loading-scripts');
-
-            if (hasTargets) {
-                // IMAGE TRACKING MODE: Need A-Frame + MindAR
-                setArMode('mindar');
-                setStatusText('Cargando motor 3D...');
-                await loadScript('https://aframe.io/releases/1.4.2/aframe.min.js');
-                setStatusText('Cargando rastreador de imágenes...');
-                await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image-aframe.prod.js');
-            } else if (hasGLB) {
-                // MARKERLESS MODE WITH GLB: Use <model-viewer> (best AR experience)
-                setArMode('model-viewer');
-                setStatusText('Cargando visor 3D...');
-                await loadScript('https://cdn.jsdelivr.net/npm/@google/model-viewer@4.1.0/dist/model-viewer.min.js', 'module');
-            } else {
-                // MARKERLESS WITH PRIMITIVES ONLY: Use A-Frame with camera
-                setArMode('aframe-camera');
-                setStatusText('Cargando motor 3D...');
-                await loadScript('https://aframe.io/releases/1.4.2/aframe.min.js');
-            }
-
-            await new Promise(r => setTimeout(r, 200));
-
-            // ====== 4. BUILD SCENE ======
             if (sceneInjected.current || !containerRef.current) return;
             sceneInjected.current = true;
             containerRef.current.innerHTML = '';
 
-            // ----- Entity builder for A-Frame -----
-            const buildEntity = (node: SceneNode): HTMLElement => {
-                const el = document.createElement('a-entity');
-                el.id = node.id;
-                el.setAttribute('position', vec3(node.position));
-                el.setAttribute('rotation', toDeg(node.rotation));
-                el.setAttribute('scale', vec3(node.scale));
-                const props = node.properties || {};
-
-                switch (node.type) {
-                    case 'box': {
-                        el.setAttribute('geometry', 'primitive: box');
-                        el.setAttribute('material', `color: ${props.color || '#7a8bcc'}; roughness: 0.5; metalness: 0.1`);
-                        break;
-                    }
-                    case 'plane': {
-                        if (node.assetId && sceneData.assets[node.assetId]) {
-                            const asset = sceneData.assets[node.assetId];
-                            el.setAttribute('geometry', 'primitive: plane; width: 1; height: 1');
-                            el.setAttribute('material', asset.type === 'video'
-                                ? `src: #vid-${asset.id}; side: double; shader: flat`
-                                : `src: url(${asset.url}); side: double; shader: flat`);
-                        } else {
-                            el.setAttribute('geometry', 'primitive: plane; width: 1; height: 1');
-                            el.setAttribute('material', `color: ${props.color || '#7a8bcc'}; side: double`);
-                        }
-                        break;
-                    }
-                    case 'light': {
-                        const lt = props.lightType || 'point';
-                        let s = `type: ${lt}; color: ${props.color || '#fff'}; intensity: ${props.intensity ?? 1}`;
-                        if (lt === 'point' || lt === 'spot') s += `; distance: ${props.distance ?? 10}`;
-                        if (lt === 'spot') s += `; angle: ${((props.angle ?? Math.PI / 4) * 180 / Math.PI).toFixed(1)}; penumbra: 0.5`;
-                        el.setAttribute('light', s);
-                        break;
-                    }
-                    case 'gltf-model': {
-                        if (node.assetId && sceneData.assets[node.assetId])
-                            el.setAttribute('gltf-model', `url(${sceneData.assets[node.assetId].url})`);
-                        break;
-                    }
-                }
-                return el;
-            };
-
-            // ===================================================================
-            //                     MODE 1: IMAGE TRACKING (MindAR)
-            // ===================================================================
+            // ====== MODE 1: IMAGE TRACKING (MindAR + A-Frame) ======
             if (hasTargets) {
+                setArMode('mindar');
+                setStatus('loading-scripts');
+                setStatusText('Cargando motor 3D...');
+                await loadScript('https://aframe.io/releases/1.4.2/aframe.min.js');
+                setStatusText('Cargando rastreador de imágenes...');
+                await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image-aframe.prod.js');
+                await new Promise(r => setTimeout(r, 200));
+
                 const scene = document.createElement('a-scene');
                 scene.setAttribute('vr-mode-ui', 'enabled: false');
                 scene.setAttribute('renderer', 'colorManagement: true; antialias: true;');
@@ -215,7 +255,37 @@ export default function Viewer() {
 
                 const target = document.createElement('a-entity');
                 target.setAttribute('mindar-image-target', 'targetIndex: 0');
-                contentNodes.forEach(n => target.appendChild(buildEntity(n)));
+                contentNodes.forEach(n => {
+                    const el = document.createElement('a-entity');
+                    el.id = n.id;
+                    el.setAttribute('position', vec3(n.position));
+                    el.setAttribute('rotation', toDeg(n.rotation));
+                    el.setAttribute('scale', vec3(n.scale));
+                    const p = n.properties || {};
+                    if (n.type === 'box') {
+                        el.setAttribute('geometry', 'primitive: box');
+                        el.setAttribute('material', `color: ${p.color || '#7a8bcc'}; roughness: 0.5; metalness: 0.1`);
+                    } else if (n.type === 'plane') {
+                        el.setAttribute('geometry', 'primitive: plane; width: 1; height: 1');
+                        if (n.assetId && sceneData.assets[n.assetId]) {
+                            const a = sceneData.assets[n.assetId];
+                            el.setAttribute('material', a.type === 'video'
+                                ? `src: #vid-${a.id}; side: double; shader: flat`
+                                : `src: url(${a.url}); side: double; shader: flat`);
+                        } else {
+                            el.setAttribute('material', `color: ${p.color || '#7a8bcc'}; side: double`);
+                        }
+                    } else if (n.type === 'light') {
+                        const lt = p.lightType || 'point';
+                        let s = `type: ${lt}; color: ${p.color || '#fff'}; intensity: ${p.intensity ?? 1}`;
+                        if (lt === 'point' || lt === 'spot') s += `; distance: ${p.distance ?? 10}`;
+                        if (lt === 'spot') s += `; angle: ${((p.angle ?? Math.PI / 4) * 180 / Math.PI).toFixed(1)}; penumbra: 0.5`;
+                        el.setAttribute('light', s);
+                    } else if (n.type === 'gltf-model' && n.assetId && sceneData.assets[n.assetId]) {
+                        el.setAttribute('gltf-model', `url(${sceneData.assets[n.assetId].url})`);
+                    }
+                    target.appendChild(el);
+                });
                 scene.appendChild(target);
 
                 containerRef.current.appendChild(scene);
@@ -231,20 +301,29 @@ export default function Viewer() {
                     });
                 });
 
-                // ===================================================================
-                //             MODE 2: MARKERLESS AR WITH <model-viewer>
-                //             Native ARCore (Android) / AR Quick Look (iOS)
-                //             Surface detection, pinch-to-zoom, anchoring
-                // ===================================================================
-            } else if (hasGLB) {
-                // Use the first GLB model as the primary model
-                const primaryGLB = glbNodes[0];
-                const glbUrl = sceneData.assets[primaryGLB.assetId!].url;
-                const projectName = (data as any).name || 'AR Experience';
+                // ====== MODE 2: MARKERLESS → Build GLB → model-viewer ======
+            } else {
+                setArMode('model-viewer');
+                setStatus('loading-scripts');
+                setStatusText('Cargando visor 3D...');
+                await loadScript('https://cdn.jsdelivr.net/npm/@google/model-viewer@4.1.0/dist/model-viewer.min.js', 'module');
 
-                // Create <model-viewer> element
+                // Build the entire scene into a GLB blob
+                setStatus('building-glb');
+                setStatusText('Construyendo escena 3D...');
+                let glbBlobUrl: string;
+                try {
+                    glbBlobUrl = await buildSceneToGLB(sceneData, contentNodes);
+                } catch (e) {
+                    console.error('GLB export failed:', e);
+                    setStatus('error');
+                    setErrorMsg('Error al construir la escena 3D.');
+                    return;
+                }
+
+                // Create <model-viewer> with the built GLB
                 const mv = document.createElement('model-viewer') as any;
-                mv.setAttribute('src', glbUrl);
+                mv.setAttribute('src', glbBlobUrl);
                 mv.setAttribute('ar', '');
                 mv.setAttribute('ar-modes', 'webxr scene-viewer quick-look');
                 mv.setAttribute('ar-scale', 'auto');
@@ -256,10 +335,9 @@ export default function Viewer() {
                 mv.setAttribute('environment-image', 'neutral');
                 mv.setAttribute('exposure', '1');
                 mv.setAttribute('alt', projectName);
-                mv.setAttribute('ar-status', 'not-presenting');
                 mv.setAttribute('interaction-prompt', 'auto');
+                mv.setAttribute('camera-orbit', '45deg 55deg auto');
 
-                // Styling
                 mv.style.cssText = `
                     width: 100vw; height: 100vh;
                     position: fixed; top: 0; left: 0;
@@ -267,7 +345,7 @@ export default function Viewer() {
                     --poster-color: transparent;
                 `;
 
-                // Custom AR button style (slot)
+                // AR button
                 const arButton = document.createElement('button');
                 arButton.slot = 'ar-button';
                 arButton.style.cssText = `
@@ -311,7 +389,7 @@ export default function Viewer() {
                 `;
                 mv.appendChild(infoOverlay);
 
-                // Interaction hint for mobile
+                // Hint
                 const hint = document.createElement('div');
                 hint.style.cssText = `
                     position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%);
@@ -323,79 +401,6 @@ export default function Viewer() {
                 mv.appendChild(hint);
 
                 containerRef.current.appendChild(mv);
-
-                // ===================================================================
-                //           MODE 3: PRIMITIVES ONLY (A-Frame + Camera)
-                // ===================================================================
-            } else {
-                const scene = document.createElement('a-scene');
-                scene.setAttribute('vr-mode-ui', 'enabled: false');
-                scene.setAttribute('loading-screen', 'enabled: false');
-                scene.setAttribute('renderer', 'colorManagement: true; antialias: true; alpha: true');
-                scene.style.background = 'transparent';
-
-                // Camera background
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-                        audio: false
-                    });
-                    const videoBg = document.createElement('video');
-                    videoBg.srcObject = stream; videoBg.muted = true; videoBg.autoplay = true;
-                    videoBg.setAttribute('playsinline', ''); videoBg.setAttribute('webkit-playsinline', '');
-                    videoBg.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;object-fit:cover;z-index:0;pointer-events:none;';
-                    containerRef.current.appendChild(videoBg);
-                    await videoBg.play();
-                    scene.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:1;background:transparent;';
-                } catch {
-                    const sky = document.createElement('a-sky');
-                    sky.setAttribute('color', '#1a1a2e');
-                    scene.appendChild(sky);
-                }
-
-                // Videos
-                if (videoAssets.length > 0) {
-                    const assetsEl = document.createElement('a-assets');
-                    videoAssets.forEach(v => {
-                        const video = document.createElement('video');
-                        video.id = `vid-${v.id}`; video.src = v.url;
-                        for (const attr of ['autoplay', 'loop', 'muted', 'playsinline', 'webkit-playsinline']) video.setAttribute(attr, '');
-                        video.setAttribute('crossorigin', 'anonymous'); video.muted = true;
-                        assetsEl.appendChild(video);
-                    });
-                    scene.appendChild(assetsEl);
-                }
-
-                // ---- Auto-frame camera to look at scene content ----
-                // Compute center of all content nodes
-                let cx = 0, cy = 0, cz = 0;
-                contentNodes.forEach(n => { cx += n.position.x; cy += n.position.y; cz += n.position.z; });
-                const count = contentNodes.length || 1;
-                cx /= count; cy /= count; cz /= count;
-                // Place camera behind and above, looking at center
-                const dist = Math.max(3, count * 0.5);
-                const camX = cx;
-                const camY = cy + dist * 0.6;
-                const camZ = cz + dist;
-
-                const cam = document.createElement('a-camera');
-                cam.setAttribute('position', `${camX.toFixed(2)} ${camY.toFixed(2)} ${camZ.toFixed(2)}`);
-                cam.setAttribute('look-controls', 'enabled: true; magicWindowTrackingEnabled: true');
-                // Look towards center
-                const dx = cx - camX, dy = cy - camY, dz = cz - camZ;
-                const pitch = Math.atan2(-dy, Math.sqrt(dx * dx + dz * dz)) * (180 / Math.PI);
-                cam.setAttribute('rotation', `${pitch.toFixed(1)} 0 0`);
-                scene.appendChild(cam);
-
-                const dl = document.createElement('a-light');
-                dl.setAttribute('type', 'directional'); dl.setAttribute('intensity', '0.6'); dl.setAttribute('position', '1 4 2');
-                scene.appendChild(dl);
-                const al = document.createElement('a-light');
-                al.setAttribute('type', 'ambient'); al.setAttribute('intensity', '0.5');
-                scene.appendChild(al);
-
-                contentNodes.forEach(n => scene.appendChild(buildEntity(n)));
-                containerRef.current.appendChild(scene);
             }
 
             // ====== CUSTOM CODE ======
@@ -427,10 +432,8 @@ export default function Viewer() {
 
     // ====== RENDER ======
     // CRITICAL: containerRef MUST always be in the DOM so buildScene can inject into it.
-    // The overlay (loading/error/empty) is shown ON TOP of the container.
     return (
         <>
-            {/* AR Scene Container — always in DOM */}
             <div
                 ref={containerRef}
                 style={{
@@ -439,7 +442,6 @@ export default function Viewer() {
                 }}
             />
 
-            {/* Overlay states — on top of container */}
             {status !== 'ready' && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 10,
@@ -465,7 +467,7 @@ export default function Viewer() {
                             <button onClick={() => window.location.reload()} style={{ marginTop: 20, padding: '10px 24px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Reintentar</button>
                         </>
                     )}
-                    {(status === 'loading' || status === 'loading-scripts') && (
+                    {(status === 'loading' || status === 'loading-scripts' || status === 'building-glb') && (
                         <>
                             <div style={{ marginBottom: 32 }}>
                                 <div style={{ width: 64, height: 64, borderRadius: 16, background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 40px rgba(124,58,237,0.3)' }}>
@@ -478,9 +480,8 @@ export default function Viewer() {
                             <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 20 }}>{statusText}</p>
                             {arMode && (
                                 <p style={{ color: '#4b5563', fontSize: 10, fontFamily: 'monospace', marginBottom: 16 }}>
-                                    {arMode === 'model-viewer' ? '🎯 AR Nativo (Surface Detection)' :
-                                        arMode === 'mindar' ? '📷 Image Tracking (MindAR)' :
-                                            '📱 Camera Overlay'}
+                                    {arMode === 'model-viewer' ? '🎯 AR Nativo (Surface Detection + Pinch-to-Zoom)' :
+                                        '📷 Image Tracking (MindAR)'}
                                 </p>
                             )}
                             <div style={{ width: 180, height: 3, background: '#1f2937', borderRadius: 4, overflow: 'hidden' }}>
