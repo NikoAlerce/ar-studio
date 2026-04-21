@@ -11,9 +11,25 @@ interface AROverlayUIProps {
 export default function AROverlayUI({ status, errorMsg, onStart, xrSupported }: AROverlayUIProps) {
     const [started, setStarted] = useState(false);
 
-    const handleStart = () => {
-        setStarted(true);
-        onStart();
+    const handleStart = async () => {
+        try {
+            // Request DeviceOrientation permission (critical for iOS)
+            if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+                const permissionState = await (DeviceOrientationEvent as any).requestPermission();
+                if (permissionState !== 'granted') {
+                    alert('Se requiere acceso al giroscopio para la experiencia AR.');
+                    return;
+                }
+            }
+
+            setStarted(true);
+            onStart();
+        } catch (err) {
+            console.error('Error requesting permissions:', err);
+            // Even if it fails, try to start (might be on Android where permission isn't requested this way)
+            setStarted(true);
+            onStart();
+        }
     };
 
     if (started && status === 'ready') return null;

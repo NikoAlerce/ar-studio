@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Suspense } from 'react';
+import { useEffect, useState, useMemo, Suspense, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Canvas } from '@react-three/fiber';
 import { createXRStore } from '@react-three/xr';
@@ -138,9 +138,9 @@ export default function Viewer() {
                 xrSupported={arMode === 'webxr-markerless'}
             />
 
-            {/* Render Canvas only when started or in testing, but actually for ImageTracking we need it immediately upon start */}
+            {/* Wait to render Canvas and Camera until user clicks Start */}
             {started && arMode && (
-                <Canvas style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'transparent', zIndex: 1 }}>
+                <Canvas gl={{ alpha: true, antialias: true }} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'transparent', zIndex: 1 }}>
                     <Suspense fallback={null}>
                         {arMode === 'image-tracking' && imageTargetSrc && (
                             <MindARImageTracker targetSrc={imageTargetSrc} nodes={sceneNodes} assets={assets} />
@@ -161,36 +161,55 @@ export default function Viewer() {
     );
 }
 
-// React component to mount the camera feed background for iOS
+// React component to mount the camera feed safely for iOS using a declarative ref
 function CameraBackground() {
-    useEffect(() => {
-        const videoBg = document.createElement('video');
-        videoBg.muted = true;
-        videoBg.autoplay = true;
-        videoBg.setAttribute('playsinline', '');
-        videoBg.setAttribute('webkit-playsinline', '');
-        videoBg.style.cssText = `
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            object-fit: cover; z-index: 0; pointer-events: none;
-        `;
-        document.body.appendChild(videoBg);
+    const videoRef = useRef<HTMLVideoElement>(null);
 
+    useEffect(() => {
         let streamRef: MediaStream | null = null;
-        navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } },
-            audio: false
-        }).then(stream => {
-            streamRef = stream;
-            videoBg.srcObject = stream;
-            videoBg.play().catch(console.error);
-        }).catch(err => {
-            console.warn('Camera access denied or missing', err);
-        });
+        let isActive = true;
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' } },
+                    audio: false
+                });
+
+                if (!isActive) {
+                    stream.getTracks().forEach(t => t.stop());
+                    return;
+                }
+
+                streamRef = stream;
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                    // Forcing play is sometimes needed inside the async flow
+                    await videoRef.current.play();
+                }
+            } catch (err) {
+                console.error('Camera access denied or missing:', err);
+                alert("No se pudo acceder a la cámara. Revisa los permisos.");
+            }
+        }
+
+        initCamera();
 
         return () => {
-            if (streamRef) streamRef.getTracks().forEach(t => t.stop());
-            videoBg.remove();
+            isActive = false;
+            if (streamRef) {
+                streamRef.getTracks().forEach(t => t.stop());
+            }
         };
     }, []);
-    return null;
+
+    return (
+        <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="fixed inset-0 w-screen h-screen object-cover z-0 pointer-events-none"
+        />
+    );
 }

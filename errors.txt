@@ -1,0 +1,8 @@
+﻿src/pages/Viewer/components/AROverlayUI.tsx(1,20): error TS6133: 'useEffect' is declared but its value is never read.
+src/pages/Viewer/components/IOSFallbackMarkerless.tsx(1,21): error TS6133: 'useState' is declared but its value is never read.
+src/pages/Viewer/components/IOSFallbackMarkerless.tsx(3,43): error TS2307: Cannot find module 'three/addons/controls/DeviceOrientationControls.js' or its corresponding type declarations.
+src/pages/Viewer/components/IOSFallbackMarkerless.tsx(6,1): error TS6133: 'THREE' is declared but its value is never read.
+src/pages/Viewer/components/SceneHydrator.tsx(1,50): error TS6133: 'useRef' is declared but its value is never read.
+src/pages/Viewer/components/WebXRMarkerless.tsx(1,1): error TS6192: All imports in import declaration are unused.
+src/pages/Viewer/components/WebXRMarkerless.tsx(3,1): error TS6192: All imports in import declaration are unused.
+src/pages/Viewer/components/WebXRMarkerless.tsx(4,1): error TS6133: 'THREE' is declared but its value is never read.

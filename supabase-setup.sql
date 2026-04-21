@@ -12,6 +12,18 @@ create table if not exists
     constraint projects_pkey primary key (id)
   ) tablespace pg_default;
 
+-- NOTA sobre el log: La app hace una consulta de "SELECT" a este entorno
+-- antes de hacer el UPSERT (guardar). Si falla el SELECT porque el ID del
+-- nuevo proyecto es recién creado localmente y no existe en BD, Supabase
+-- podría devolver un "406 Not Acceptable (PGRST116: The result contains 0 rows)". 
+-- Esto está bien manejado en el frontend, así que puedes ignorar ese error de red.
+
+-- Opcionalmente, habilita el Row Level Security (RLS) en "projects" si lo requieres:
+-- ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+-- Y agrega políticas públicas para evitar problemas en modo de pruebas:
+-- CREATE POLICY "Public Access" ON public.projects FOR ALL USING (true);
+
+
 -- Si la tabla ya existía sin las columnas name y thumbnail:
 -- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS name TEXT DEFAULT 'Proyecto sin nombre';
 -- ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS thumbnail TEXT;

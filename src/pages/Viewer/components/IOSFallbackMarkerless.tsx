@@ -26,12 +26,18 @@ export default function IOSFallbackMarkerless({
             camera.position.set(0, 0, 3);
         }
 
-        // Initialize DeviceOrientationControls
-        const controls = new DeviceOrientationControls(camera);
-        controlsRef.current = controls;
+        // Assuming permissions were granted in the AROverlayUI step, controls should work now
+        try {
+            const controls = new DeviceOrientationControls(camera);
+            controlsRef.current = controls;
+        } catch (e) {
+            console.warn("DeviceOrientationControls failed to initialize (expected on Desktop)", e);
+        }
 
         return () => {
-            controls.dispose();
+            if (controlsRef.current) {
+                controlsRef.current.dispose();
+            }
         };
     }, [camera, gl]);
 
@@ -56,40 +62,4 @@ export default function IOSFallbackMarkerless({
     );
 }
 
-// Helper to open camera feed behind the canvas
-export function useCameraBackground(active: boolean) {
-    useEffect(() => {
-        if (!active) return;
-
-        const videoBg = document.createElement('video');
-        videoBg.muted = true;
-        videoBg.autoplay = true;
-        videoBg.setAttribute('playsinline', '');
-        videoBg.setAttribute('webkit-playsinline', '');
-        videoBg.style.cssText = `
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            object-fit: cover; z-index: -1; pointer-events: none;
-        `;
-        document.body.appendChild(videoBg);
-
-        let streamRef: MediaStream | null = null;
-
-        navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } },
-            audio: false
-        }).then(stream => {
-            streamRef = stream;
-            videoBg.srcObject = stream;
-            videoBg.play().catch(console.error);
-        }).catch(err => {
-            console.warn('Camera access denied or missing', err);
-        });
-
-        return () => {
-            if (streamRef) {
-                streamRef.getTracks().forEach(t => t.stop());
-            }
-            videoBg.remove();
-        };
-    }, [active]);
-}
+// Note: useCameraBackground was removed in favor of the unified React component in Viewer/index.tsx

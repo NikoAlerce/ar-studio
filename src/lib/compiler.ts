@@ -5,22 +5,27 @@
 export async function compileMindARImage(file: File): Promise<{ mindBlob: Blob, thumbnailBlob: Blob }> {
     return new Promise((resolve, reject) => {
         // 1. Ensure MindAR Compiler is loaded
-        if (!(window as any).MINDAR) {
-            const script = document.createElement('script');
-            script.src = "https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image.prod.js"; // This loads MINDAR core
-            script.crossOrigin = "anonymous";
-            script.onload = () => {
-                // Now load compiler
+        const loadCompiler = () => {
+            if (!(window as any).MINDAR?.IMAGE?.Compiler) {
                 const compilerScript = document.createElement('script');
                 compilerScript.src = "https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image-compiler.prod.js";
                 compilerScript.onload = () => runCompiler(file, resolve, reject);
                 compilerScript.onerror = () => reject(new Error("Failed to load MindAR Compiler SDK"));
                 document.head.appendChild(compilerScript);
-            };
+            } else {
+                runCompiler(file, resolve, reject);
+            }
+        };
+
+        if (!(window as any).MINDAR) {
+            const script = document.createElement('script');
+            script.src = "https://cdn.jsdelivr.net/npm/mind-ar@1.1.0/dist/mindar-image.prod.js"; // This loads MINDAR core
+            script.crossOrigin = "anonymous";
+            script.onload = loadCompiler;
             script.onerror = () => reject(new Error("Failed to load MindAR Core"));
             document.head.appendChild(script);
         } else {
-            runCompiler(file, resolve, reject);
+            loadCompiler();
         }
     });
 }

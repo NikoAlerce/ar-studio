@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, Suspense, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, TransformControls, Grid, useGLTF, Outlines, Environment } from '@react-three/drei';
+import { OrbitControls, TransformControls, Grid, useGLTF, Outlines, Environment, PerspectiveCamera, useHelper } from '@react-three/drei';
 import * as THREE from 'three';
 import { useSceneStore } from '../../../store/sceneStore';
 import type { TransformMode } from '../index';
@@ -124,25 +124,38 @@ function LightNode({ active, properties = {} }: { active: boolean; properties?: 
     );
 }
 
-function CameraNode({ active }: { active: boolean }) {
+function CameraNode({ active, properties = {} }: { active: boolean; properties?: Record<string, any> }) {
+    const fov = properties.fov ?? 60;
+    const cameraRef = useRef<THREE.PerspectiveCamera>(null);
+
+    // We only show the helper when active, or we can show it all the time with low opacity.
+    // Drei's useHelper is a hook.
+    useHelper(active ? (cameraRef as React.MutableRefObject<THREE.Object3D>) : null, THREE.CameraHelper, '#00aaff');
+
     return (
         <group>
-            {/* Camera Body */}
+            {/* The physical body of the camera */}
             <mesh>
-                <boxGeometry args={[0.4, 0.4, 0.6]} />
-                <meshStandardMaterial color={active ? '#FFD700' : '#444455'} roughness={0.5} />
-                {active && <Outlines thickness={3} color="#FFD700" />}
+                <boxGeometry args={[0.3, 0.3, 0.5]} />
+                <meshStandardMaterial color={active ? '#00aaff' : '#444455'} roughness={0.5} />
+                {active && <Outlines thickness={2} color="#00aaff" />}
             </mesh>
-            {/* Camera Lens */}
-            <mesh position={[0, 0, -0.4]} rotation={[-Math.PI / 2, 0, 0]}>
-                <cylinderGeometry args={[0.2, 0.15, 0.3, 16]} />
-                <meshStandardMaterial color={active ? '#FFAA00' : '#222'} roughness={0.2} />
+            {/* The "Lens" */}
+            <mesh position={[0, 0, -0.3]} rotation={[-Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.15, 0.1, 0.2, 16]} />
+                <meshStandardMaterial color={active ? '#0077cc' : '#222'} roughness={0.2} />
             </mesh>
-            {/* View Cone (Frustum Helper) */}
-            <mesh position={[0, 0, -1.3]} rotation={[-Math.PI / 2, 0, 0]}>
-                <cylinderGeometry args={[0.8, 0, 1.5, 4, 1, true]} />
-                <meshBasicMaterial color={active ? '#FFD700' : '#888'} wireframe opacity={active ? 0.3 : 0.15} transparent side={THREE.DoubleSide} />
-            </mesh>
+
+            {/* The invisible real camera that powers the helper */}
+            <PerspectiveCamera
+                ref={cameraRef}
+                makeDefault={false}
+                fov={fov}
+                aspect={9 / 16} // Mobile viewport aspect ratio
+                near={0.1}
+                far={10} // Just long enough to show the view cone length reasonably
+                rotation={[0, Math.PI, 0]} // rotate because threejs camera looks down -Z natively
+            />
         </group>
     );
 }
@@ -168,7 +181,7 @@ function NodeObject({
             {node.type === 'box' && <BoxNode active={active} properties={node.properties} />}
             {node.type === 'plane' && <PlaneNode active={active} asset={linkedAsset} properties={node.properties} />}
             {node.type === 'light' && <LightNode active={active} properties={node.properties} />}
-            {node.type === 'camera' && <CameraNode active={active} />}
+            {node.type === 'camera' && <CameraNode active={active} properties={node.properties} />}
             {node.type === 'gltf-model' && node.assetId && assets[node.assetId] && (
                 <Suspense fallback={
                     <mesh>
@@ -211,19 +224,34 @@ function ActiveNodeWithControls({
     useEffect(() => {
         if (!transformRef.current) return;
         const controls = transformRef.current;
+        let lastUpdate = 0;
 
         const onDraggingChanged = (event: any) => {
             if (orbitRef.current) orbitRef.current.enabled = !event.value;
+            // Ensure the exact final position is saved when drag stops
+            if (!event.value && controls.object) {
+                const obj = controls.object;
+                updateTransformFn(
+                    { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+                    { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+                    { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
+                );
+            }
         };
 
         const onChange = () => {
-            if (!controls.object) return;
-            const obj = controls.object;
-            updateTransformFn(
-                { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-                { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
-                { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
-            );
+            if (controls.object) {
+                const now = performance.now();
+                if (now - lastUpdate > 60) { // Throttle to roughly 15-16 fps for React state sync
+                    lastUpdate = now;
+                    const obj = controls.object;
+                    updateTransformFn(
+                        { x: obj.position.x, y: obj.position.y, z: obj.position.z },
+                        { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+                        { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
+                    );
+                }
+            }
         };
 
         controls.addEventListener('dragging-changed', onDraggingChanged);
@@ -278,13 +306,11 @@ function ActiveNodeWithControls({
 
 
 export default function Canvas3D({ mode }: { mode: TransformMode }) {
-    const { sceneNodes, assets, activeNodeId, setActiveNode, updateTransform } = useSceneStore();
+    const { sceneNodes, assets, activeNodeId, setActiveNode, updateNodeTransforms } = useSceneStore();
     const orbitRef = useRef<any>(null);
 
     const updateTransformFn = (id: string) => (pos: any, rot: any, scl: any) => {
-        updateTransform(id, 'position', pos);
-        updateTransform(id, 'rotation', rot);
-        updateTransform(id, 'scale', scl);
+        updateNodeTransforms(id, { position: pos, rotation: rot, scale: scl });
     };
 
     return (

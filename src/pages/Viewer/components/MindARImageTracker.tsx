@@ -99,6 +99,11 @@ export default function MindARImageTracker({
 
         return () => {
             if (mindARRef.current) {
+                const video = mindARRef.current.video;
+                if (video && video.srcObject) {
+                    const stream = video.srcObject as MediaStream;
+                    stream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+                }
                 mindARRef.current.stop();
             }
             if (containerRef.current) {

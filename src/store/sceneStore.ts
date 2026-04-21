@@ -62,6 +62,7 @@ interface SceneState {
 
     // Node Actions
     updateTransform: (id: string, property: 'position' | 'rotation' | 'scale', value: Transform) => void;
+    updateNodeTransforms: (id: string, transforms: { position: Transform, rotation: Transform, scale: Transform }) => void;
     addNode: (node: SceneNode) => void;
     removeNode: (id: string) => void;
     updateNodeName: (id: string, name: string) => void;
@@ -95,7 +96,17 @@ const DEFAULT_CODE = `// AR Studio — Interactive Logic Layer
 // });
 `;
 
-const defaultSceneNodes: Record<string, SceneNode> = {};
+const defaultSceneNodes: Record<string, SceneNode> = {
+    'default-camera': {
+        id: 'default-camera',
+        name: 'Main Camera (Mobile)',
+        type: 'camera',
+        position: { x: 0, y: 1.6, z: 3 }, // Representa la altura/distancia del celular
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+        properties: { fov: 60 }
+    }
+};
 
 export const useSceneStore = create<SceneState>((set, get) => ({
     assets: {},
@@ -117,6 +128,21 @@ export const useSceneStore = create<SceneState>((set, get) => ({
                 [id]: {
                     ...state.sceneNodes[id],
                     [property]: value
+                }
+            }
+        };
+    }),
+
+    updateNodeTransforms: (id, transforms) => set((state) => {
+        if (!state.sceneNodes[id]) return state;
+        return {
+            sceneNodes: {
+                ...state.sceneNodes,
+                [id]: {
+                    ...state.sceneNodes[id],
+                    position: transforms.position,
+                    rotation: transforms.rotation,
+                    scale: transforms.scale
                 }
             }
         };
@@ -232,18 +258,22 @@ export const useSceneStore = create<SceneState>((set, get) => ({
 
                 // Compatibility: old format had 'entities' instead of 'sceneNodes'
                 if ('entities' in loadedData && !('sceneNodes' in loadedData)) {
+                    let nodes = loadedData.entities as Record<string, SceneNode>;
+                    if (!nodes || Object.keys(nodes).length === 0) nodes = defaultSceneNodes;
                     set({
                         assets: {},
-                        sceneNodes: loadedData.entities as any,
+                        sceneNodes: nodes,
                         customCode: DEFAULT_CODE,
                         projectName: data.name || 'Proyecto sin nombre',
                         activeNodeId: null
                     });
                 } else {
                     const typedData = loadedData as DBSceneData;
+                    let nodes = typedData.sceneNodes || {};
+                    if (Object.keys(nodes).length === 0) nodes = defaultSceneNodes;
                     set({
                         assets: typedData.assets || {},
-                        sceneNodes: typedData.sceneNodes || {},
+                        sceneNodes: nodes,
                         customCode: typedData.customCode || DEFAULT_CODE,
                         projectName: data.name || 'Proyecto sin nombre',
                         activeNodeId: null
